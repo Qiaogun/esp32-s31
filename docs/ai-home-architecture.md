@@ -9,12 +9,13 @@ This project is split into three low-coupling parts:
 ## Runtime Flow
 
 1. Device connects to Wi-Fi with `wifi_connect <ssid> <password>`.
-2. Device health is reported to `POST /api/v1/device/heartbeat`.
-3. Wake events go to `POST /api/v1/wake`.
-4. Dialog text goes to `POST /api/v1/dialog`; the server calls the local OpenAI-compatible model endpoint configured by `OUO_LLM_BASE_URL`.
-5. The server maps assistant/user context to a device mood and returns a `set_mood` action. On the device this maps to `mood <name>`.
-6. Camera frames can be uploaded to `POST /api/v1/camera/frame`; the web console renders `GET /api/v1/camera/latest`.
-7. OTA metadata is served by `GET /api/v1/ota/manifest`. Firmware binaries are served from `/ota/`.
+2. `ai_home_server <url>` stores the Rust backend URL in NVS.
+3. `ai_home_ping` reports device health to `POST /api/v1/device/heartbeat`.
+4. Wake events go to `POST /api/v1/wake`; manual wake diagnostics remain available with `wake <phrase> [confidence]`.
+5. `ai_home_dialog <text>` posts dialog text to `POST /api/v1/dialog`; the server calls the local OpenAI-compatible model endpoint configured by `OUO_LLM_BASE_URL`.
+6. The server maps assistant/user context to a device mood and returns a stable `device_mood`; the device applies it to the OuO renderer.
+7. Camera frames can be uploaded to `POST /api/v1/camera/frame`; the web console renders `GET /api/v1/camera/latest`.
+8. OTA metadata is served by `GET /api/v1/ota/manifest`. Firmware binaries are served from `/ota/`.
 
 ## Stable API Surface
 

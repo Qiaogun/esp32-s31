@@ -4,13 +4,21 @@ mod llm;
 mod state;
 mod types;
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Result;
 use tower_http::{services::ServeDir, trace::TraceLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::state::AppState;
+
+fn existing_dir(primary: &str, fallback: &str) -> PathBuf {
+    let primary = PathBuf::from(primary);
+    if primary.is_dir() {
+        return primary;
+    }
+    PathBuf::from(fallback)
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -23,9 +31,11 @@ async fn main() -> Result<()> {
         .init();
 
     let state = AppState::new();
+    let static_dir = existing_dir("server/static", "static");
+    let ota_dir = existing_dir("server/ota", "ota");
     let app = api::router(state)
-        .nest_service("/ota", ServeDir::new("server/ota"))
-        .fallback_service(ServeDir::new("server/static").append_index_html_on_directories(true))
+        .nest_service("/ota", ServeDir::new(ota_dir))
+        .fallback_service(ServeDir::new(static_dir).append_index_html_on_directories(true))
         .layer(TraceLayer::new_for_http());
 
     let addr: SocketAddr = std::env::var("OUO_SERVER_ADDR")

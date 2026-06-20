@@ -19,6 +19,7 @@
 #include "esp_event.h"
 #include "esp_flash.h"
 #include "esp_heap_caps.h"
+#include "esp_http_client.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_rgb.h"
 #include "esp_log.h"
@@ -74,6 +75,9 @@
 #define OUO_CAMERA_RGB565_BYTES_PER_PIXEL 2
 #define OUO_CAMERA_SCCB_FREQ_HZ 100000
 #define OUO_FIRMWARE_VERSION "0.2.0-ai-home-link"
+#define OUO_AI_HTTP_TIMEOUT_MS 8000
+#define OUO_AI_HTTP_RESPONSE_MAX 2048
+#define OUO_AI_HEARTBEAT_INTERVAL_MS 30000
 
 typedef struct {
     const char* board;
@@ -108,6 +112,12 @@ typedef struct {
     esp_sccb_io_handle_t sccb_handle;
 } ouo_camera_sensor_session_t;
 
+typedef struct {
+    char* data;
+    int len;
+    int cap;
+} ouo_http_response_t;
+
 static const char* TAG = "ouo_s31";
 static bool s_wifi_ready = false;
 static bool s_storage_ready = false;
@@ -133,6 +143,8 @@ static char s_ai_server_url[128] = "http://127.0.0.1:8787";
 static char s_ota_manifest_url[160] = "http://127.0.0.1:8787/api/v1/ota/manifest";
 static char s_last_wake_phrase[64] = "";
 static uint8_t s_last_wake_confidence = 0;
+static bool s_ai_home_autostart = false;
+static TaskHandle_t s_ai_home_task_handle = NULL;
 static esp_err_t ensure_korvo_lcd_ready(void);
 static ouo_state_t s_state = {
     .board = "ESP32-S31-Korvo-1",
@@ -174,6 +186,8 @@ static bool parse_on_off(const char* value, bool* out) {
     return false;
 }
 
+static void ai_home_post_wake_event(const char* phrase, float confidence);
+
 static bool valid_mood(const char* mood) {
     static const char* moods[] = {
         "smile", "grump", "angry", "surprise", "blink", "squint",
@@ -198,6 +212,56 @@ static const char* menu_mood_name(int index) {
     return moods[index];
 }
 
+static void update_ota_manifest_url(void) {
+    snprintf(s_ota_manifest_url, sizeof(s_ota_manifest_url), "%s/api/v1/ota/manifest", s_ai_server_url);
+}
+
+static void save_ai_home_config(void) {
+    nvs_handle_t nvs = 0;
+    esp_err_t err = nvs_open("ouo", NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "nvs_open ai_home failed: %s", esp_err_to_name(err));
+        return;
+    }
+    err = nvs_set_str(nvs, "ai_server", s_ai_server_url);
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs, "ai_autostart", s_ai_home_autostart ? 1 : 0);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "nvs ai_home commit failed: %s", esp_err_to_name(err));
+    }
+    nvs_close(nvs);
+}
+
+static void load_ai_home_config(void) {
+    nvs_handle_t nvs = 0;
+    esp_err_t err = nvs_open("ouo", NVS_READONLY, &nvs);
+    if (err != ESP_OK) {
+        update_ota_manifest_url();
+        return;
+    }
+
+    size_t len = sizeof(s_ai_server_url);
+    err = nvs_get_str(nvs, "ai_server", s_ai_server_url, &len);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "nvs_get_str ai_server failed: %s", esp_err_to_name(err));
+    }
+
+    uint8_t autostart = 0;
+    err = nvs_get_u8(nvs, "ai_autostart", &autostart);
+    if (err == ESP_OK) {
+        s_ai_home_autostart = autostart != 0;
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "nvs_get_u8 ai_autostart failed: %s", esp_err_to_name(err));
+    }
+
+    nvs_close(nvs);
+    update_ota_manifest_url();
+}
+
 static void print_help(void) {
     printf("commands:\n");
     printf("  help\n");
@@ -210,6 +274,9 @@ static void print_help(void) {
     printf("  wifi_connect <ssid> <password>\n");
     printf("  ai_home_status\n");
     printf("  ai_home_server <url>\n");
+    printf("  ai_home_ping\n");
+    printf("  ai_home_dialog <text>\n");
+    printf("  ai_home_autostart on|off\n");
     printf("  wake <phrase> [0.0-1.0]\n");
     printf("  emotion_map <text>\n");
     printf("  ota_status\n");
@@ -276,6 +343,9 @@ static void ai_home_status_command(void) {
            s_last_wake_confidence,
            s_state.mood,
            s_camera_preview_active);
+    printf("ai_home autostart=%d heartbeat_interval_ms=%d\n",
+           s_ai_home_autostart,
+           OUO_AI_HEARTBEAT_INTERVAL_MS);
     printf("ai_home api heartbeat=POST /api/v1/device/heartbeat wake=POST /api/v1/wake dialog=POST /api/v1/dialog camera=POST /api/v1/camera/frame\n");
 }
 
@@ -288,8 +358,20 @@ static void ai_home_server_command(const char* args) {
         return;
     }
     snprintf(s_ai_server_url, sizeof(s_ai_server_url), "%s", url);
-    snprintf(s_ota_manifest_url, sizeof(s_ota_manifest_url), "%s/api/v1/ota/manifest", s_ai_server_url);
+    update_ota_manifest_url();
+    save_ai_home_config();
     printf("ok ai_home_server=\"%s\"\n", s_ai_server_url);
+}
+
+static void ai_home_autostart_command(const char* args) {
+    bool enabled = false;
+    if (!parse_on_off(args, &enabled)) {
+        printf("err use: ai_home_autostart on|off\n");
+        return;
+    }
+    s_ai_home_autostart = enabled;
+    save_ai_home_config();
+    printf("ok ai_home_autostart=%d\n", enabled);
 }
 
 static void wake_command(const char* args) {
@@ -315,6 +397,7 @@ static void wake_command(const char* args) {
     snprintf(s_last_wake_phrase, sizeof(s_last_wake_phrase), "%s", phrase);
     s_last_wake_confidence = (uint8_t)(confidence * 100.0f);
     apply_mood_from_ai(confidence >= 0.80f ? "blink" : "surprise");
+    ai_home_post_wake_event(s_last_wake_phrase, confidence);
     printf("wake ok phrase=\"%s\" confidence=%.2f mood=%s post=%s/api/v1/wake\n",
            s_last_wake_phrase,
            confidence,
@@ -962,6 +1045,9 @@ static void print_status(void) {
            s_ota_manifest_url,
            s_last_wake_phrase,
            s_last_wake_confidence);
+    printf("ai_home autostart=%d heartbeat_interval_ms=%d\n",
+           s_ai_home_autostart,
+           OUO_AI_HEARTBEAT_INTERVAL_MS);
     print_touch_status();
     if (s_state.renderer_ready) {
         printf("renderer_frames=%" PRIu32 " renderer_last_ms=%" PRIu32 " renderer_mood=%s idle=%.1f pressure=%.1f mouth=%d\n",
@@ -1140,6 +1226,259 @@ static void wifi_connect_command(const char* args) {
         }
     }
     printf("wifi_connect timeout\n");
+}
+
+static bool wifi_is_connected(void) {
+    wifi_ap_record_t ap = {};
+    return esp_wifi_sta_get_ap_info(&ap) == ESP_OK;
+}
+
+static esp_err_t http_event_collect_response(esp_http_client_event_t* evt) {
+    if (evt->event_id != HTTP_EVENT_ON_DATA || evt->data == NULL || evt->data_len <= 0) {
+        return ESP_OK;
+    }
+    ouo_http_response_t* response = (ouo_http_response_t*)evt->user_data;
+    if (response == NULL || response->data == NULL || response->cap <= 0) {
+        return ESP_OK;
+    }
+    int copy = evt->data_len;
+    if (response->len + copy >= response->cap) {
+        copy = response->cap - response->len - 1;
+    }
+    if (copy > 0) {
+        memcpy(response->data + response->len, evt->data, copy);
+        response->len += copy;
+        response->data[response->len] = '\0';
+    }
+    return ESP_OK;
+}
+
+static void build_ai_url(char* out, size_t out_size, const char* path) {
+    const char* slash = s_ai_server_url[strlen(s_ai_server_url) - 1] == '/' ? "" : "/";
+    while (path[0] == '/') {
+        path++;
+    }
+    snprintf(out, out_size, "%s%s%s", s_ai_server_url, slash, path);
+}
+
+static void json_escape(char* out, size_t out_size, const char* input) {
+    size_t used = 0;
+    if (out_size == 0) {
+        return;
+    }
+    for (const unsigned char* p = (const unsigned char*)input; *p != '\0' && used + 1 < out_size; ++p) {
+        if (*p == '"' || *p == '\\') {
+            if (used + 2 >= out_size) {
+                break;
+            }
+            out[used++] = '\\';
+            out[used++] = (char)*p;
+        } else if (*p == '\n' || *p == '\r' || *p == '\t') {
+            if (used + 2 >= out_size) {
+                break;
+            }
+            out[used++] = '\\';
+            out[used++] = *p == '\n' ? 'n' : (*p == '\r' ? 'r' : 't');
+        } else if (*p >= 0x20) {
+            out[used++] = (char)*p;
+        }
+    }
+    out[used] = '\0';
+}
+
+static bool json_extract_string(const char* json, const char* key, char* out, size_t out_size) {
+    if (json == NULL || key == NULL || out == NULL || out_size == 0) {
+        return false;
+    }
+    char pattern[48] = {};
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    const char* cursor = strstr(json, pattern);
+    if (cursor == NULL) {
+        return false;
+    }
+    cursor = strchr(cursor + strlen(pattern), ':');
+    if (cursor == NULL) {
+        return false;
+    }
+    cursor++;
+    while (*cursor != '\0' && isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+    if (*cursor != '"') {
+        return false;
+    }
+    cursor++;
+
+    size_t used = 0;
+    while (*cursor != '\0' && *cursor != '"' && used + 1 < out_size) {
+        if (*cursor == '\\' && cursor[1] != '\0') {
+            cursor++;
+            if (*cursor == 'n') {
+                out[used++] = '\n';
+            } else if (*cursor == 'r') {
+                out[used++] = '\r';
+            } else if (*cursor == 't') {
+                out[used++] = '\t';
+            } else {
+                out[used++] = *cursor;
+            }
+        } else {
+            out[used++] = *cursor;
+        }
+        cursor++;
+    }
+    out[used] = '\0';
+    return used > 0 || *cursor == '"';
+}
+
+static esp_err_t ai_home_post_json(const char* path, const char* body, char* response, size_t response_size, int* status_code) {
+    if (status_code != NULL) {
+        *status_code = 0;
+    }
+    if (response != NULL && response_size > 0) {
+        response[0] = '\0';
+    }
+
+    esp_err_t err = ensure_wifi_ready();
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (!wifi_is_connected()) {
+        return ESP_ERR_WIFI_NOT_CONNECT;
+    }
+
+    char url[192] = {};
+    build_ai_url(url, sizeof(url), path);
+    ouo_http_response_t collector = {
+        .data = response,
+        .len = 0,
+        .cap = (int)response_size,
+    };
+    esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = OUO_AI_HTTP_TIMEOUT_MS,
+        .event_handler = http_event_collect_response,
+        .user_data = &collector,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (client == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_post_field(client, body, (int)strlen(body));
+    err = esp_http_client_perform(client);
+    if (status_code != NULL) {
+        *status_code = esp_http_client_get_status_code(client);
+    }
+    esp_http_client_cleanup(client);
+    return err;
+}
+
+static void ai_home_post_wake_event(const char* phrase, float confidence) {
+    if (!s_wifi_ready || !wifi_is_connected()) {
+        return;
+    }
+
+    char escaped[128] = {};
+    json_escape(escaped, sizeof(escaped), phrase == NULL ? "" : phrase);
+    char body[256] = {};
+    snprintf(body, sizeof(body),
+             "{\"device_id\":\"ouo-s31-korvo-1\",\"phrase\":\"%s\",\"confidence\":%.2f}",
+             escaped,
+             confidence);
+
+    char response[512] = {};
+    int status_code = 0;
+    esp_err_t err = ai_home_post_json("/api/v1/wake", body, response, sizeof(response), &status_code);
+    if (err != ESP_OK || status_code < 200 || status_code >= 300) {
+        ESP_LOGW(TAG, "ai_home wake post failed err=%s http=%d", esp_err_to_name(err), status_code);
+        return;
+    }
+    ESP_LOGI(TAG, "ai_home wake post ok http=%d", status_code);
+}
+
+static void ai_home_ping_command(bool verbose) {
+    esp_netif_ip_info_t ip = {};
+    bool has_ip = s_sta_netif != NULL && esp_netif_get_ip_info(s_sta_netif, &ip) == ESP_OK;
+    char body[384] = {};
+    if (has_ip) {
+        snprintf(body, sizeof(body),
+                 "{\"device_id\":\"ouo-s31-korvo-1\",\"firmware_version\":\"%s\",\"ip\":\"" IPSTR "\",\"battery_percent\":null,\"current_mood\":\"%s\"}",
+                 OUO_FIRMWARE_VERSION,
+                 IP2STR(&ip.ip),
+                 s_state.mood);
+    } else {
+        snprintf(body, sizeof(body),
+                 "{\"device_id\":\"ouo-s31-korvo-1\",\"firmware_version\":\"%s\",\"ip\":null,\"battery_percent\":null,\"current_mood\":\"%s\"}",
+                 OUO_FIRMWARE_VERSION,
+                 s_state.mood);
+    }
+
+    char response[OUO_AI_HTTP_RESPONSE_MAX] = {};
+    int status_code = 0;
+    esp_err_t err = ai_home_post_json("/api/v1/device/heartbeat", body, response, sizeof(response), &status_code);
+    if (err != ESP_OK || status_code < 200 || status_code >= 300) {
+        if (verbose) {
+            printf("ai_home_ping err=%s http=%d response=\"%s\"\n", esp_err_to_name(err), status_code, response);
+        } else {
+            ESP_LOGW(TAG, "ai_home heartbeat failed err=%s http=%d", esp_err_to_name(err), status_code);
+        }
+        return;
+    }
+    if (verbose) {
+        printf("ai_home_ping ok http=%d response=\"%s\"\n", status_code, response);
+    } else {
+        ESP_LOGI(TAG, "ai_home heartbeat ok http=%d", status_code);
+    }
+}
+
+static void ai_home_dialog_command(const char* args) {
+    char text[192] = {};
+    snprintf(text, sizeof(text), "%s", args == NULL ? "" : args);
+    trim_line(text);
+    if (text[0] == '\0') {
+        printf("err use: ai_home_dialog <text>\n");
+        return;
+    }
+
+    char escaped[384] = {};
+    json_escape(escaped, sizeof(escaped), text);
+    char body[768] = {};
+    snprintf(body, sizeof(body),
+             "{\"device_id\":\"ouo-s31-korvo-1\",\"text\":\"%s\",\"locale\":\"zh-CN\",\"context\":\"mood=%s wake=%s\"}",
+             escaped,
+             s_state.mood,
+             s_last_wake_phrase);
+
+    char response[OUO_AI_HTTP_RESPONSE_MAX] = {};
+    int status_code = 0;
+    esp_err_t err = ai_home_post_json("/api/v1/dialog", body, response, sizeof(response), &status_code);
+    if (err != ESP_OK || status_code < 200 || status_code >= 300) {
+        printf("ai_home_dialog err=%s http=%d response=\"%s\"\n", esp_err_to_name(err), status_code, response);
+        return;
+    }
+
+    char mood[24] = {};
+    char reply[512] = {};
+    if (json_extract_string(response, "device_mood", mood, sizeof(mood)) && valid_mood(mood)) {
+        apply_mood_from_ai(mood);
+    }
+    if (!json_extract_string(response, "text", reply, sizeof(reply))) {
+        snprintf(reply, sizeof(reply), "(no text)");
+    }
+    printf("ai_home_dialog ok http=%d mood=%s text=\"%s\"\n", status_code, s_state.mood, reply);
+}
+
+static void ai_home_task(void* arg) {
+    (void)arg;
+    while (true) {
+        if (s_ai_home_autostart && s_wifi_ready && wifi_is_connected()) {
+            ai_home_ping_command(false);
+        }
+        vTaskDelay(pdMS_TO_TICKS(OUO_AI_HEARTBEAT_INTERVAL_MS));
+    }
 }
 
 static void stop_camera_probe_xclk(void) {
@@ -1597,7 +1936,7 @@ static void camera_focus_command(void) {
 
 static void process_command(char* line) {
     trim_line(line);
-    char original[128] = {};
+    char original[256] = {};
     snprintf(original, sizeof(original), "%s", line);
     lower_line(line);
     if (line[0] == '\0') {
@@ -1639,6 +1978,18 @@ static void process_command(char* line) {
     }
     if (strncmp(line, "ai_home_server ", 15) == 0) {
         ai_home_server_command(original + 15);
+        return;
+    }
+    if (strcmp(line, "ai_home_ping") == 0) {
+        ai_home_ping_command(true);
+        return;
+    }
+    if (strncmp(line, "ai_home_dialog ", 15) == 0) {
+        ai_home_dialog_command(original + 15);
+        return;
+    }
+    if (strncmp(line, "ai_home_autostart ", 18) == 0) {
+        ai_home_autostart_command(line + 18);
         return;
     }
     if (strcmp(line, "wake") == 0) {
@@ -1910,7 +2261,7 @@ static void load_boot_count(void) {
 
 static void serial_task(void* arg) {
     (void)arg;
-    char line[128] = {};
+    char line[256] = {};
     size_t len = 0;
     uint8_t byte = 0;
 
@@ -1955,14 +2306,16 @@ void app_main(void) {
 
     s_state.boot_ms = (uint32_t)(esp_timer_get_time() / 1000);
     load_boot_count();
+    load_ai_home_config();
     ESP_LOGI(TAG, "OuO ESP32-S31 bring-up started");
-    ESP_LOGI(TAG, "serial commands: help, status, diag, mac, partitions, ota_status, ai_home_status, ai_home_server <url>, wake <phrase> [confidence], emotion_map <text>, board_info, storage_test, wifi_scan, wifi_status, wifi_connect <ssid> <password>, camera_probe, camera_preview [seconds], camera_focus, lcd_probe, lcd_test, renderer_test, touch_status, korvo_led_test [gpio], function_led_test, mood <name>, blush on|off, option <key> on|off, reboot");
+    ESP_LOGI(TAG, "serial commands: help, status, diag, mac, partitions, ota_status, ai_home_status, ai_home_server <url>, ai_home_ping, ai_home_dialog <text>, ai_home_autostart on|off, wake <phrase> [confidence], emotion_map <text>, board_info, storage_test, wifi_scan, wifi_status, wifi_connect <ssid> <password>, camera_probe, camera_preview [seconds], camera_focus, lcd_probe, lcd_test, renderer_test, touch_status, korvo_led_test [gpio], function_led_test, mood <name>, blush on|off, option <key> on|off, reboot");
     renderer_test_command();
     print_status();
 
     xTaskCreate(serial_task, "ouo_serial", 8192, NULL, 5, NULL);
     xTaskCreate(render_task, "ouo_render", 8192, NULL, 5, &s_render_task_handle);
     xTaskCreate(touch_task, "ouo_touch", 4096, NULL, 3, NULL);
+    xTaskCreate(ai_home_task, "ouo_ai_home", 8192, NULL, 3, &s_ai_home_task_handle);
 
     while (true) {
         ESP_LOGI(TAG, "alive uptime_ms=%" PRIu32 " mood=%s heap=%" PRIu32,

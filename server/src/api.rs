@@ -12,6 +12,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::json;
+use std::path::Path;
 
 use crate::emotion::map_emotion;
 use crate::state::{AppState, LatestFrame};
@@ -201,8 +202,13 @@ struct OtaQuery {
 async fn ota_manifest(
     Query(query): Query<OtaQuery>,
 ) -> Result<Json<OtaManifest>, (StatusCode, Json<serde_json::Value>)> {
-    let manifest_path = std::env::var("OUO_OTA_MANIFEST")
-        .unwrap_or_else(|_| "server/ota/manifest.json".to_string());
+    let manifest_path = std::env::var("OUO_OTA_MANIFEST").unwrap_or_else(|_| {
+        if Path::new("server/ota/manifest.json").is_file() {
+            "server/ota/manifest.json".to_string()
+        } else {
+            "ota/manifest.json".to_string()
+        }
+    });
     let bytes = tokio::fs::read_to_string(&manifest_path)
         .await
         .map_err(|err| {

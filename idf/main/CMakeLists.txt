@@ -15,6 +15,7 @@ idf_component_register(SRCS
                                 esp_event
                            esp_hw_support
                            app_update
+                           esp_http_client
                            esp_mm
                            esp_netif
                            esp_partition
