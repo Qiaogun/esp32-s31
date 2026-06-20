@@ -1,0 +1,11 @@
+{
+  "version": "0.1.0",
+  "channel": "dev",
+  "firmware_url": "http://127.0.0.1:8787/ota/ouo_s31_bringup.bin",
+  "sha256": "replace-with-built-firmware-sha256",
+  "size": 0,
+  "notes": [
+    "Initial AI Home OTA manifest placeholder.",
+    "Build idf/build/ouo_s31_bringup.bin, copy it to server/ota/, then update sha256 and size."
+  ]
+}

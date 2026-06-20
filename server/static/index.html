@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OuO AI Home</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <div>
+          <h1>OuO AI Home</h1>
+          <p id="status">connecting...</p>
+        </div>
+        <button id="speak-toggle" type="button">Server speech on</button>
+      </section>
+
+      <section class="grid">
+        <article class="panel preview">
+          <header>
+            <h2>Camera Preview</h2>
+            <button id="refresh-camera" type="button">Refresh</button>
+          </header>
+          <img id="camera" alt="latest camera frame" />
+          <p id="camera-meta">No frame yet</p>
+        </article>
+
+        <article class="panel">
+          <h2>Assistant</h2>
+          <form id="dialog-form">
+            <textarea id="dialog-text" rows="4" placeholder="说点什么，例如：检查一下家里状态"></textarea>
+            <button type="submit">Send</button>
+          </form>
+          <div id="reply"></div>
+        </article>
+
+        <article class="panel">
+          <h2>Device State</h2>
+          <pre id="state">{}</pre>
+        </article>
+
+        <article class="panel">
+          <h2>Events</h2>
+          <ol id="events"></ol>
+        </article>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

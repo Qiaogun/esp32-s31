@@ -1,0 +1,162 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  background: #101211;
+  color: #f3f0ea;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+.shell {
+  width: min(1180px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 24px 0;
+}
+
+.topbar {
+  min-height: 88px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #3c403d;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+h2 {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+#status,
+#camera-meta {
+  margin-top: 6px;
+  color: #b9b5ac;
+  font-size: 13px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  padding-top: 16px;
+}
+
+.panel {
+  border: 1px solid #3c403d;
+  border-radius: 8px;
+  background: #181b19;
+  padding: 16px;
+}
+
+.panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.preview {
+  min-height: 420px;
+}
+
+#camera {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  display: block;
+  background: #050606;
+  border: 1px solid #303430;
+  border-radius: 6px;
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 110px;
+  border-radius: 6px;
+  border: 1px solid #3c403d;
+  background: #0e100f;
+  color: #f3f0ea;
+  padding: 10px;
+}
+
+button {
+  min-height: 38px;
+  border: 1px solid #5a625b;
+  border-radius: 6px;
+  background: #e8d9a6;
+  color: #171713;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+form button {
+  width: 100%;
+  margin-top: 10px;
+}
+
+#reply {
+  margin-top: 12px;
+  min-height: 72px;
+  color: #f3f0ea;
+  line-height: 1.5;
+}
+
+pre {
+  overflow: auto;
+  max-height: 300px;
+  margin: 0;
+  color: #cbd7cf;
+  font-size: 12px;
+}
+
+ol {
+  padding-left: 18px;
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+}
+
+li {
+  margin-bottom: 8px;
+  color: #cbd7cf;
+  font-size: 13px;
+  word-break: break-word;
+}
+
+@media (max-width: 860px) {
+  .topbar,
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    padding-bottom: 16px;
+  }
+}

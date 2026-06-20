@@ -1,0 +1,32 @@
+idf_component_register(SRCS
+                            "ouo_s31_bringup.c"
+                            "led_strip_encoder.c"
+                            "OuORuntime.cpp"
+                            "ouo_assets.cpp"
+                            "s31_ouo_renderer.cpp"
+                           PRIV_REQUIRES
+                                esp_driver_gpio
+                                esp_driver_i2c
+                                esp_driver_ledc
+                                esp_driver_cam
+                                esp_driver_uart
+                                esp_driver_rmt
+                                esp_lcd
+                                esp_event
+                           esp_hw_support
+                           app_update
+                           esp_mm
+                           esp_netif
+                           esp_partition
+                           esp_system
+                           esp_timer
+                           esp_wifi
+                           freertos
+                           heap
+                           log
+                           nvs_flash
+                           spiffs
+                           spi_flash
+                           vfs
+                           esp_cam_sensor
+                       INCLUDE_DIRS ".")

@@ -1,0 +1,7 @@
+menu "OuO S31 Camera Compatibility"
+
+config CAMERA_OV3660_MAX_SUPPORT
+    int
+    default 1
+
+endmenu

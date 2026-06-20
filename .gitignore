@@ -1,0 +1,8 @@
+.pio/
+idf/build/
+idf/managed_components/
+idf/sdkconfig
+idf/sdkconfig.old
+logs/
+server/*.log
+server/target/

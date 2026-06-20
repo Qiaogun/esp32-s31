@@ -1,0 +1,57 @@
+# OuO AI Home Architecture
+
+This project is split into three low-coupling parts:
+
+- `idf/`: ESP32-S31 firmware for display, touch, camera bring-up, serial diagnostics, OTA partition readiness, wake/emotion commands.
+- `server/`: Rust AI Home backend for assistant state, local LLM proxying, camera frame ingestion, WebSocket events, browser-based server speech, and OTA manifests.
+- `server/static/`: Web console using the same HTTP/WebSocket API that a future mobile client should use.
+
+## Runtime Flow
+
+1. Device connects to Wi-Fi with `wifi_connect <ssid> <password>`.
+2. Device health is reported to `POST /api/v1/device/heartbeat`.
+3. Wake events go to `POST /api/v1/wake`.
+4. Dialog text goes to `POST /api/v1/dialog`; the server calls the local OpenAI-compatible model endpoint configured by `OUO_LLM_BASE_URL`.
+5. The server maps assistant/user context to a device mood and returns a `set_mood` action. On the device this maps to `mood <name>`.
+6. Camera frames can be uploaded to `POST /api/v1/camera/frame`; the web console renders `GET /api/v1/camera/latest`.
+7. OTA metadata is served by `GET /api/v1/ota/manifest`. Firmware binaries are served from `/ota/`.
+
+## Stable API Surface
+
+- `GET /health`
+- `GET /api/v1/state`
+- `POST /api/v1/device/heartbeat`
+- `POST /api/v1/wake`
+- `POST /api/v1/emotion/map`
+- `POST /api/v1/dialog`
+- `POST /api/v1/camera/frame`
+- `GET /api/v1/camera/latest`
+- `GET /api/v1/ota/manifest`
+- `POST /api/v1/ota/report`
+- `GET /api/v1/events` WebSocket
+
+Future native phone clients should use the API directly and should not depend on web console internals.
+
+## Local Model
+
+Default local LLM endpoint:
+
+```powershell
+$env:OUO_LLM_BASE_URL="http://127.0.0.1:11434/v1/chat/completions"
+$env:OUO_LLM_MODEL="qwen2.5:7b"
+```
+
+Any OpenAI-compatible local server can be used by changing those two variables.
+
+## OTA
+
+The ESP partition table now includes `factory`, `ota_0`, `ota_1`, and `otadata`.
+
+For a dev OTA package:
+
+1. Build `idf/build/ouo_s31_bringup.bin`.
+2. Copy it to `server/ota/ouo_s31_bringup.bin`.
+3. Update `server/ota/manifest.json` with `version`, `sha256`, and `size`.
+4. Confirm from the device with `ota_status`.
+
+The current firmware exposes OTA readiness and manifest configuration. The next step is wiring the manifest download to `esp_https_ota`.
