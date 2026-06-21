@@ -28,6 +28,7 @@ Helper scripts from `esp32-s31`:
 .\scripts\smoke-serial-s31.ps1 -Port COM3
 .\scripts\smoke-serial-s31.ps1 -Port COM3 -Board korvo-1 -WifiScan
 .\scripts\smoke-serial-s31.ps1 -Port COM3 -Board function-coreboard-1 -WifiScan
+.\scripts\smoke-ai-home-serial.ps1 -Port COM3
 .\scripts\smoke-ai-home-backend.ps1 -BaseUrl http://127.0.0.1:8787
 .\scripts\prepare-ai-home-lan.ps1
 .\scripts\smoke-ai-home-device.ps1 -Port COM3 -Ssid <ssid> -Password <password> -ServerUrl http://<pc-ip>:8787
@@ -111,6 +112,14 @@ Backend smoke test:
 cargo test --manifest-path server\Cargo.toml
 .\scripts\smoke-ai-home-backend.ps1 -BaseUrl http://127.0.0.1:8787
 ```
+
+AI Home serial smoke without Wi-Fi credentials:
+
+```powershell
+.\scripts\smoke-ai-home-serial.ps1 -Port COM5
+```
+
+This validates the device-side AI Home serial commands, persisted server/OTA/autostart configuration, local wake and emotion-to-mood mapping, OTA readiness, and controlled offline errors for network commands. Use `smoke-ai-home-device.ps1` for the full Wi-Fi device-to-server closed loop.
 
 LAN backend and OTA manifest preparation before device smoke:
 
