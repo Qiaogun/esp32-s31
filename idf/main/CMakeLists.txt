@@ -26,6 +26,7 @@ idf_component_register(SRCS
                            freertos
                            heap
                            log
+                           mbedtls
                            nvs_flash
                            spiffs
                            spi_flash

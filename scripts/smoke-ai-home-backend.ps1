@@ -98,21 +98,21 @@ Assert-True -Condition ($dialog.actions[0].kind -eq "set_mood") -Message "dialog
 Assert-NotBlank -Value $dialog.actions[0].value -Message "dialog first action value was blank"
 Write-Host "ok dialog mood=$($dialog.device_mood) action=$($dialog.actions[0].kind):$($dialog.actions[0].value)"
 
-$png1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+$bmp1x1 = "Qk06AAAAAAAAADYAAAAoAAAAAQAAAP////8BABgAAAAAAAQAAAATCwAAEwsAAAAAAAAAAAAA////AA=="
 $camera = Invoke-JsonPost "/api/v1/camera/frame" @{
     device_id = $DeviceId
-    mime = "image/png"
+    mime = "image/bmp"
     width = 1
     height = 1
-    image_base64 = $png1x1
+    image_base64 = $bmp1x1
 }
 Assert-True -Condition ($camera.device_id -eq $DeviceId) -Message "camera meta did not preserve device_id"
-Assert-True -Condition ($camera.mime -eq "image/png") -Message "camera meta mime mismatch"
+Assert-True -Condition ($camera.mime -eq "image/bmp") -Message "camera meta mime mismatch"
 Assert-True -Condition ($camera.bytes -gt 0) -Message "camera meta byte count was zero"
 $latestCamera = Invoke-WebRequest -Method Get -Uri (Join-Url $BaseUrl "/api/v1/camera/latest") -TimeoutSec $TimeoutSec
 Assert-True -Condition ($latestCamera.StatusCode -eq 200) -Message "camera latest did not return HTTP 200"
 $latestCameraContentType = [string]::Join("; ", @($latestCamera.Headers["Content-Type"]))
-Assert-True -Condition ($latestCameraContentType -match "image/png") -Message "camera latest content type was not image/png"
+Assert-True -Condition ($latestCameraContentType -match "image/bmp") -Message "camera latest content type was not image/bmp"
 Write-Host "ok camera bytes=$($camera.bytes) latest_content_type=$latestCameraContentType"
 
 $manifest = Invoke-RestMethod -Method Get -Uri (Join-Url $BaseUrl "/api/v1/ota/manifest") -TimeoutSec $TimeoutSec

@@ -14,7 +14,7 @@ This project is split into three low-coupling parts:
 4. Wake events go to `POST /api/v1/wake`; manual wake diagnostics remain available with `wake <phrase> [confidence]`.
 5. `ai_home_dialog <text>` posts dialog text to `POST /api/v1/dialog`; the server calls the local OpenAI-compatible model endpoint configured by `OUO_LLM_BASE_URL`.
 6. The server maps assistant/user context to a device mood and returns a stable `device_mood`; the device applies it to the OuO renderer.
-7. Camera frames can be uploaded to `POST /api/v1/camera/frame`; the web console renders `GET /api/v1/camera/latest`.
+7. `ai_home_camera_snapshot` captures one OV3660 frame, uploads it to `POST /api/v1/camera/frame`, and the web console renders `GET /api/v1/camera/latest`.
 8. OTA metadata is served by `GET /api/v1/ota/manifest`; the device can verify it with `ota_check` and apply it with `ota_update`.
 
 ## Stable API Surface

@@ -120,6 +120,7 @@ ai_home_status
 ai_home_server <url>
 ai_home_ping
 ai_home_dialog <text>
+ai_home_camera_snapshot
 ai_home_autostart on|off
 wake <phrase> [0.0-1.0]
 emotion_map <text>
@@ -130,6 +131,8 @@ ota_manifest_url <url>
 ```
 
 `ai_home_server` and `ai_home_autostart` are persisted in NVS. After Wi-Fi is connected, `ai_home_ping` posts a heartbeat to the Rust backend, and `ai_home_dialog <text>` posts text to `/api/v1/dialog`, applies the returned `device_mood`, and prints the assistant text. The device currently has no speaker dependency. Assistant audio is handled on the server console with browser speech synthesis, while the device receives mood/actions.
+
+`ai_home_camera_snapshot` captures a 240x240 OV3660 RGB565 frame, posts it as a browser-readable BMP to `/api/v1/camera/frame`, and the web console can render it through `/api/v1/camera/latest`.
 
 `ota_check` downloads and parses the backend OTA manifest without flashing. `ota_update` downloads the manifest, applies the manifest `firmware_url` through `esp_https_ota`, reports OTA state back to `/api/v1/ota/report`, and reboots after a successful update.
 

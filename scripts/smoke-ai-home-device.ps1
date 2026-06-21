@@ -7,6 +7,7 @@ param(
     [string]$DialogText = "你好",
     [int]$TimeoutSec = 45,
     [switch]$SkipWifiConnect,
+    [switch]$SkipCameraSnapshot,
     [switch]$SkipOtaCheck,
     [string]$LogPath = ""
 )
@@ -141,7 +142,7 @@ try {
     $serial.DiscardInBuffer()
     $serial.DiscardOutBuffer()
 
-    $output = "OuO AI Home device smoke`r`nport=$Port baud=$Baud timeout_sec=$TimeoutSec server_url=$ServerUrl skip_wifi_connect=$SkipWifiConnect skip_ota_check=$SkipOtaCheck`r`n"
+    $output = "OuO AI Home device smoke`r`nport=$Port baud=$Baud timeout_sec=$TimeoutSec server_url=$ServerUrl skip_wifi_connect=$SkipWifiConnect skip_camera_snapshot=$SkipCameraSnapshot skip_ota_check=$SkipOtaCheck`r`n"
     $output += Read-SerialFor -Serial $serial -Milliseconds 1500
 
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_autostart off" -Label "ai_home_autostart off" -WaitMs 1000
@@ -158,6 +159,10 @@ try {
     $output += Send-DeviceCommand -Serial $serial -Command "wake ouo 0.91" -Label "wake ouo 0.91" -WaitMs 3000
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_dialog $DialogText" -Label "ai_home_dialog <text>" -WaitMs 15000
 
+    if (-not $SkipCameraSnapshot) {
+        $output += Send-DeviceCommand -Serial $serial -Command "ai_home_camera_snapshot" -Label "ai_home_camera_snapshot" -WaitMs 30000
+    }
+
     if (-not $SkipOtaCheck) {
         $output += Send-DeviceCommand -Serial $serial -Command "ota_check" -Label "ota_check" -WaitMs 10000
     }
@@ -173,6 +178,9 @@ try {
     Assert-Contains -Text $output -Needle "ai_home_ping ok http=200" -Message "Device heartbeat did not reach backend"
     Assert-Contains -Text $output -Needle "wake ok phrase=" -Message "Wake diagnostic did not run"
     Assert-Contains -Text $output -Needle "ai_home_dialog ok http=200" -Message "Dialog did not reach backend"
+    if (-not $SkipCameraSnapshot) {
+        Assert-Contains -Text $output -Needle "ai_home_camera_snapshot ok http=200" -Message "Camera snapshot did not reach backend"
+    }
     Assert-Contains -Text $output -Needle "mood=" -Message "Status did not include mood"
     if (-not $SkipOtaCheck) {
         Assert-Contains -Text $output -Needle "ota_check ok http=200" -Message "OTA manifest check did not reach backend"

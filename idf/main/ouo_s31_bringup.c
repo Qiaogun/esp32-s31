@@ -37,6 +37,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "led_strip_encoder.h"
+#include "mbedtls/base64.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "s31_ouo_renderer.h"
@@ -77,6 +78,7 @@
 #define OUO_CAMERA_SCCB_FREQ_HZ 100000
 #define OUO_FIRMWARE_VERSION "0.2.0-ai-home-link"
 #define OUO_AI_HTTP_TIMEOUT_MS 8000
+#define OUO_AI_CAMERA_HTTP_TIMEOUT_MS 20000
 #define OUO_AI_HTTP_RESPONSE_MAX 2048
 #define OUO_AI_HEARTBEAT_INTERVAL_MS 30000
 
@@ -296,6 +298,7 @@ static void print_help(void) {
     printf("  ai_home_server <url>\n");
     printf("  ai_home_ping\n");
     printf("  ai_home_dialog <text>\n");
+    printf("  ai_home_camera_snapshot\n");
     printf("  ai_home_autostart on|off\n");
     printf("  wake <phrase> [0.0-1.0]\n");
     printf("  emotion_map <text>\n");
@@ -1424,7 +1427,12 @@ static esp_err_t ai_home_get_url(const char* url, char* response, size_t respons
     return err;
 }
 
-static esp_err_t ai_home_post_json(const char* path, const char* body, char* response, size_t response_size, int* status_code) {
+static esp_err_t ai_home_post_json_timeout(const char* path,
+                                           const char* body,
+                                           char* response,
+                                           size_t response_size,
+                                           int* status_code,
+                                           int timeout_ms) {
     if (status_code != NULL) {
         *status_code = 0;
     }
@@ -1450,7 +1458,7 @@ static esp_err_t ai_home_post_json(const char* path, const char* body, char* res
     esp_http_client_config_t config = {
         .url = url,
         .method = HTTP_METHOD_POST,
-        .timeout_ms = OUO_AI_HTTP_TIMEOUT_MS,
+        .timeout_ms = timeout_ms,
         .event_handler = http_event_collect_response,
         .user_data = &collector,
     };
@@ -1467,6 +1475,10 @@ static esp_err_t ai_home_post_json(const char* path, const char* body, char* res
     }
     esp_http_client_cleanup(client);
     return err;
+}
+
+static esp_err_t ai_home_post_json(const char* path, const char* body, char* response, size_t response_size, int* status_code) {
+    return ai_home_post_json_timeout(path, body, response, response_size, status_code, OUO_AI_HTTP_TIMEOUT_MS);
 }
 
 static esp_err_t ai_home_fetch_ota_manifest(ouo_ota_manifest_t* manifest, char* raw, size_t raw_size, int* status_code) {
@@ -1847,6 +1859,283 @@ static void camera_swap_rgb565_be_to_lcd(const uint8_t* src, uint8_t* dst, size_
     }
 }
 
+static void put_le16(uint8_t* out, uint16_t value) {
+    out[0] = (uint8_t)(value & 0xff);
+    out[1] = (uint8_t)((value >> 8) & 0xff);
+}
+
+static void put_le32(uint8_t* out, uint32_t value) {
+    out[0] = (uint8_t)(value & 0xff);
+    out[1] = (uint8_t)((value >> 8) & 0xff);
+    out[2] = (uint8_t)((value >> 16) & 0xff);
+    out[3] = (uint8_t)((value >> 24) & 0xff);
+}
+
+static esp_err_t camera_rgb565_be_to_bmp24(const uint8_t* src, int width, int height, uint8_t** out_bmp, size_t* out_size) {
+    if (src == NULL || out_bmp == NULL || out_size == NULL || width <= 0 || height <= 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const size_t header_size = 54;
+    const size_t row_stride = ((size_t)width * 3U + 3U) & ~3U;
+    const size_t pixel_bytes = row_stride * (size_t)height;
+    const size_t bmp_size = header_size + pixel_bytes;
+    uint8_t* bmp = heap_caps_calloc(1, bmp_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (bmp == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    bmp[0] = 'B';
+    bmp[1] = 'M';
+    put_le32(&bmp[2], (uint32_t)bmp_size);
+    put_le32(&bmp[10], (uint32_t)header_size);
+    put_le32(&bmp[14], 40);
+    put_le32(&bmp[18], (uint32_t)width);
+    put_le32(&bmp[22], (uint32_t)(-height));
+    put_le16(&bmp[26], 1);
+    put_le16(&bmp[28], 24);
+    put_le32(&bmp[34], (uint32_t)pixel_bytes);
+
+    for (int y = 0; y < height; ++y) {
+        uint8_t* row = bmp + header_size + (size_t)y * row_stride;
+        for (int x = 0; x < width; ++x) {
+            const size_t src_i = ((size_t)y * (size_t)width + (size_t)x) * OUO_CAMERA_RGB565_BYTES_PER_PIXEL;
+            const uint16_t rgb565 = ((uint16_t)src[src_i] << 8) | src[src_i + 1];
+            const uint8_t r = (uint8_t)((((rgb565 >> 11) & 0x1f) * 255U) / 31U);
+            const uint8_t g = (uint8_t)((((rgb565 >> 5) & 0x3f) * 255U) / 63U);
+            const uint8_t b = (uint8_t)(((rgb565 & 0x1f) * 255U) / 31U);
+            row[(size_t)x * 3U + 0U] = b;
+            row[(size_t)x * 3U + 1U] = g;
+            row[(size_t)x * 3U + 2U] = r;
+        }
+    }
+
+    *out_bmp = bmp;
+    *out_size = bmp_size;
+    return ESP_OK;
+}
+
+static esp_err_t camera_capture_rgb565_be(const ouo_camera_preview_format_t* format, uint8_t** out_frame, size_t* out_size) {
+    if (format == NULL || out_frame == NULL || out_size == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_cam_ctlr_handle_t cam_handle = NULL;
+    void* cam_buffer = NULL;
+    ouo_camera_sensor_session_t sensor_session = {};
+    esp_err_t result = ESP_OK;
+
+    esp_cam_ctlr_dvp_pin_config_t pin_cfg = {
+        .data_width = OUO_KORVO_CAMERA_DATA_WIDTH,
+        .data_io = {
+            OUO_KORVO_CAMERA_D0_GPIO,
+            OUO_KORVO_CAMERA_D1_GPIO,
+            OUO_KORVO_CAMERA_D2_GPIO,
+            OUO_KORVO_CAMERA_D3_GPIO,
+            OUO_KORVO_CAMERA_D4_GPIO,
+            OUO_KORVO_CAMERA_D5_GPIO,
+            OUO_KORVO_CAMERA_D6_GPIO,
+            OUO_KORVO_CAMERA_D7_GPIO,
+        },
+        .vsync_io = OUO_KORVO_CAMERA_VSYNC_GPIO,
+        .de_io = OUO_KORVO_CAMERA_DE_GPIO,
+        .pclk_io = OUO_KORVO_CAMERA_PCLK_GPIO,
+        .xclk_io = OUO_KORVO_CAMERA_XCLK_GPIO,
+    };
+
+    esp_cam_ctlr_dvp_config_t dvp_config = {
+        .ctlr_id = 0,
+        .clk_src = CAM_CLK_SRC_DEFAULT,
+        .h_res = format->width,
+        .v_res = format->height,
+        .input_data_color_type = CAM_CTLR_COLOR_RGB565,
+        .output_data_color_type = CAM_CTLR_COLOR_RGB565,
+        .dma_burst_size = 64,
+        .pin = &pin_cfg,
+        .bk_buffer_dis = 1,
+        .xclk_freq = OUO_KORVO_CAMERA_XCLK_HZ,
+        .cam_data_width = OUO_KORVO_CAMERA_DATA_WIDTH,
+        .bit_swap_en = false,
+        .byte_swap_en = false,
+    };
+
+    result = esp_cam_new_dvp_ctlr(&dvp_config, &cam_handle);
+    if (result != ESP_OK) {
+        goto cleanup;
+    }
+
+    const size_t frame_size = (size_t)format->width * (size_t)format->height * OUO_CAMERA_RGB565_BYTES_PER_PIXEL;
+    cam_buffer = esp_cam_ctlr_alloc_buffer(cam_handle, frame_size, MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM);
+    if (cam_buffer == NULL) {
+        result = ESP_ERR_NO_MEM;
+        goto cleanup;
+    }
+
+    result = camera_sensor_start(format->name, &sensor_session);
+    if (result != ESP_OK) {
+        goto cleanup;
+    }
+
+    esp_cam_ctlr_trans_t trans_data = {
+        .buffer = cam_buffer,
+        .buflen = frame_size,
+    };
+    esp_cam_ctlr_evt_cbs_t cbs = {
+        .on_get_new_trans = camera_preview_get_new_buffer,
+        .on_trans_finished = camera_preview_trans_finished,
+    };
+    result = esp_cam_ctlr_register_event_callbacks(cam_handle, &cbs, &trans_data);
+    if (result != ESP_OK) {
+        goto cleanup;
+    }
+
+    const uint32_t start_finished = (uint32_t)s_camera_preview_finished_trans;
+    result = esp_cam_ctlr_enable(cam_handle);
+    if (result != ESP_OK) {
+        goto cleanup;
+    }
+    result = esp_cam_ctlr_start(cam_handle);
+    if (result != ESP_OK) {
+        goto cleanup;
+    }
+
+    result = ESP_ERR_TIMEOUT;
+    for (int i = 0; i < 50; ++i) {
+        if ((uint32_t)s_camera_preview_finished_trans > start_finished) {
+            esp_cache_msync(cam_buffer, frame_size, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+            uint8_t* frame_copy = heap_caps_malloc(frame_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (frame_copy == NULL) {
+                result = ESP_ERR_NO_MEM;
+                goto cleanup;
+            }
+            memcpy(frame_copy, cam_buffer, frame_size);
+            *out_frame = frame_copy;
+            *out_size = frame_size;
+            result = ESP_OK;
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+cleanup:
+    if (cam_handle != NULL) {
+        esp_cam_ctlr_stop(cam_handle);
+        esp_cam_ctlr_disable(cam_handle);
+    }
+    camera_sensor_stop(&sensor_session);
+    if (cam_handle != NULL) {
+        esp_cam_ctlr_del(cam_handle);
+    }
+    if (cam_buffer != NULL) {
+        heap_caps_free(cam_buffer);
+    }
+    release_touch_i2c_for_camera();
+    return result;
+}
+
+static void ai_home_camera_snapshot_command(void) {
+    if (s_camera_preview_active) {
+        printf("ai_home_camera_snapshot err=camera_busy\n");
+        return;
+    }
+
+    static const ouo_camera_preview_format_t format = {
+        "DVP_8bit_20Minput_RGB565_BE_240x240_24fps",
+        240,
+        240,
+    };
+
+    stop_camera_probe_xclk();
+    vTaskDelay(pdMS_TO_TICKS(100));
+    release_touch_i2c_for_camera();
+    printf("ai_home_camera_snapshot begin format=\"%s\"\n", format.name);
+
+    uint8_t* frame = NULL;
+    size_t frame_size = 0;
+    esp_err_t err = ESP_FAIL;
+    for (int attempt = 1; attempt <= 2; ++attempt) {
+        s_camera_preview_new_trans = 0;
+        s_camera_preview_finished_trans = 0;
+        err = camera_capture_rgb565_be(&format, &frame, &frame_size);
+        if (err == ESP_OK) {
+            break;
+        }
+        printf("ai_home_camera_snapshot capture_attempt=%d err=%s new_trans=%" PRIu32 " finished=%" PRIu32 "\n",
+               attempt,
+               esp_err_to_name(err),
+               (uint32_t)s_camera_preview_new_trans,
+               (uint32_t)s_camera_preview_finished_trans);
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+    if (err != ESP_OK) {
+        printf("ai_home_camera_snapshot err=%s step=capture\n", esp_err_to_name(err));
+        return;
+    }
+
+    uint8_t* bmp = NULL;
+    size_t bmp_size = 0;
+    err = camera_rgb565_be_to_bmp24(frame, format.width, format.height, &bmp, &bmp_size);
+    heap_caps_free(frame);
+    if (err != ESP_OK) {
+        printf("ai_home_camera_snapshot err=%s step=bmp\n", esp_err_to_name(err));
+        return;
+    }
+
+    const size_t b64_cap = ((bmp_size + 2U) / 3U) * 4U + 1U;
+    unsigned char* b64 = heap_caps_malloc(b64_cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (b64 == NULL) {
+        heap_caps_free(bmp);
+        printf("ai_home_camera_snapshot err=no_memory step=base64_alloc size=%u\n", (unsigned)b64_cap);
+        return;
+    }
+
+    size_t b64_len = 0;
+    int enc = mbedtls_base64_encode(b64, b64_cap, &b64_len, bmp, bmp_size);
+    heap_caps_free(bmp);
+    if (enc != 0) {
+        heap_caps_free(b64);
+        printf("ai_home_camera_snapshot err=base64_%d\n", enc);
+        return;
+    }
+    b64[b64_len] = '\0';
+
+    const size_t body_cap = b64_len + 256U;
+    char* body = heap_caps_malloc(body_cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (body == NULL) {
+        heap_caps_free(b64);
+        printf("ai_home_camera_snapshot err=no_memory step=body_alloc size=%u\n", (unsigned)body_cap);
+        return;
+    }
+    snprintf(body,
+             body_cap,
+             "{\"device_id\":\"ouo-s31-korvo-1\",\"mime\":\"image/bmp\",\"width\":%d,\"height\":%d,\"image_base64\":\"%s\"}",
+             format.width,
+             format.height,
+             (const char*)b64);
+    heap_caps_free(b64);
+
+    char response[OUO_AI_HTTP_RESPONSE_MAX] = {};
+    int status_code = 0;
+    err = ai_home_post_json_timeout("/api/v1/camera/frame",
+                                    body,
+                                    response,
+                                    sizeof(response),
+                                    &status_code,
+                                    OUO_AI_CAMERA_HTTP_TIMEOUT_MS);
+    heap_caps_free(body);
+    if (err != ESP_OK || status_code < 200 || status_code >= 300) {
+        printf("ai_home_camera_snapshot err=%s http=%d response=\"%s\"\n", esp_err_to_name(err), status_code, response);
+        return;
+    }
+
+    printf("ai_home_camera_snapshot ok http=%d width=%d height=%d bytes=%u response=\"%s\"\n",
+           status_code,
+           format.width,
+           format.height,
+           (unsigned)bmp_size,
+           response);
+}
+
 static esp_err_t camera_preview_run_format(const ouo_camera_preview_format_t* format, int seconds) {
     esp_cam_ctlr_handle_t cam_handle = NULL;
     void* cam_buffer = NULL;
@@ -2205,6 +2494,10 @@ static void process_command(char* line) {
         ai_home_dialog_command(original + 15);
         return;
     }
+    if (strcmp(line, "ai_home_camera_snapshot") == 0) {
+        ai_home_camera_snapshot_command();
+        return;
+    }
     if (strncmp(line, "ai_home_autostart ", 18) == 0) {
         ai_home_autostart_command(line + 18);
         return;
@@ -2525,7 +2818,7 @@ void app_main(void) {
     load_boot_count();
     load_ai_home_config();
     ESP_LOGI(TAG, "OuO ESP32-S31 bring-up started");
-    ESP_LOGI(TAG, "serial commands: help, status, diag, mac, partitions, ota_status, ota_check, ota_update, ai_home_status, ai_home_server <url>, ai_home_ping, ai_home_dialog <text>, ai_home_autostart on|off, wake <phrase> [confidence], emotion_map <text>, board_info, storage_test, wifi_scan, wifi_status, wifi_connect <ssid> <password>, camera_probe, camera_preview [seconds], camera_focus, lcd_probe, lcd_test, renderer_test, touch_status, korvo_led_test [gpio], function_led_test, mood <name>, blush on|off, option <key> on|off, reboot");
+    ESP_LOGI(TAG, "serial commands: help, status, diag, mac, partitions, ota_status, ota_check, ota_update, ai_home_status, ai_home_server <url>, ai_home_ping, ai_home_dialog <text>, ai_home_camera_snapshot, ai_home_autostart on|off, wake <phrase> [confidence], emotion_map <text>, board_info, storage_test, wifi_scan, wifi_status, wifi_connect <ssid> <password>, camera_probe, camera_preview [seconds], camera_focus, lcd_probe, lcd_test, renderer_test, touch_status, korvo_led_test [gpio], function_led_test, mood <name>, blush on|off, option <key> on|off, reboot");
     renderer_test_command();
     print_status();
 
