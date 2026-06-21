@@ -9,6 +9,7 @@ const dialogText = document.querySelector("#dialog-text");
 const commandForm = document.querySelector("#command-form");
 const commandMood = document.querySelector("#command-mood");
 const commandStatus = document.querySelector("#command-status");
+const captureCommand = document.querySelector("#capture-command");
 const speakToggle = document.querySelector("#speak-toggle");
 const refreshCamera = document.querySelector("#refresh-camera");
 
@@ -123,6 +124,25 @@ commandForm.addEventListener("submit", async (event) => {
     return;
   }
   commandStatus.textContent = `queued set_mood:${mood} · remaining ${data.queued}`;
+});
+
+captureCommand.addEventListener("click", async () => {
+  commandStatus.textContent = "queueing camera...";
+  const res = await fetch("/api/v1/device/command", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      device_id: "ouo-s31-korvo-1",
+      kind: "capture_camera",
+      value: "snapshot",
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    commandStatus.textContent = data.error || "camera command failed";
+    return;
+  }
+  commandStatus.textContent = `queued capture_camera:snapshot · remaining ${data.queued}`;
 });
 
 speakToggle.addEventListener("click", () => {

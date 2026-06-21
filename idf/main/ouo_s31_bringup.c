@@ -203,6 +203,7 @@ static bool parse_on_off(const char* value, bool* out) {
 }
 
 static void ai_home_post_wake_event(const char* phrase, float confidence);
+static void ai_home_camera_snapshot_command(void);
 
 static bool valid_mood(const char* mood) {
     static const char* moods[] = {
@@ -1800,6 +1801,10 @@ static bool ai_home_apply_action_response(const char* response) {
     }
     if (strcmp(kind, "set_mood") == 0 && valid_mood(value)) {
         apply_mood_from_ai(value);
+        return true;
+    }
+    if (strcmp(kind, "capture_camera") == 0 && strcmp(value, "snapshot") == 0) {
+        ai_home_camera_snapshot_command();
         return true;
     }
     ESP_LOGW(TAG, "ai_home ignored action kind=%s value=%s", kind, value);

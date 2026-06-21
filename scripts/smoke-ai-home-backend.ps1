@@ -86,6 +86,20 @@ $emptyCommand = Invoke-JsonPost "/api/v1/device/command" @{
 Assert-True -Condition (@($emptyCommand.actions).Count -eq 0) -Message "device command queue was not drained"
 Write-Host "ok command action=$($polledCommand.actions[0].kind):$($polledCommand.actions[0].value)"
 
+$queuedCameraCommand = Invoke-JsonPost "/api/v1/device/command" @{
+    device_id = $DeviceId
+    kind = "capture_camera"
+    value = "snapshot"
+}
+Assert-True -Condition ($queuedCameraCommand.queued -ge 1) -Message "camera command did not queue"
+$polledCameraCommand = Invoke-JsonPost "/api/v1/device/command" @{
+    device_id = $DeviceId
+}
+Assert-True -Condition (@($polledCameraCommand.actions).Count -eq 1) -Message "camera command poll did not return one action"
+Assert-True -Condition ($polledCameraCommand.actions[0].kind -eq "capture_camera") -Message "camera command kind mismatch"
+Assert-True -Condition ($polledCameraCommand.actions[0].value -eq "snapshot") -Message "camera command value mismatch"
+Write-Host "ok command action=$($polledCameraCommand.actions[0].kind):$($polledCameraCommand.actions[0].value)"
+
 $wake = Invoke-JsonPost "/api/v1/wake" @{
     device_id = $DeviceId
     phrase = "ouo"

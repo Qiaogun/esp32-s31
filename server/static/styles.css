@@ -133,6 +133,13 @@ button {
   cursor: pointer;
 }
 
+button.secondary {
+  width: 100%;
+  margin-top: 10px;
+  background: #27302b;
+  color: #f3f0ea;
+}
+
 form button {
   width: 100%;
   margin-top: 10px;

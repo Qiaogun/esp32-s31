@@ -133,7 +133,7 @@ Full closed-loop smoke after flashing:
 
 The closed-loop script starts the Rust backend if needed, publishes OTA metadata for the detected LAN URL, runs backend HTTP smoke, and then runs the serial device smoke.
 
-The web console at `http://<pc-ip>:8787/` can send dialog text, view the latest camera frame, inspect device state/events, and queue `set_mood` commands for the ESP to receive through `ai_home_poll`.
+The web console at `http://<pc-ip>:8787/` can send dialog text, view the latest camera frame, inspect device state/events, and queue `set_mood` or `capture_camera:snapshot` commands for the ESP to receive through `ai_home_poll`.
 
 The ESP firmware exposes matching serial diagnostics:
 
@@ -157,7 +157,7 @@ ota_manifest_url <url>
 
 `ai_home_server` and `ai_home_autostart` are persisted in NVS. After Wi-Fi is connected, `ai_home_ping` posts a heartbeat to the Rust backend, `ai_home_poll` fetches queued server actions from `/api/v1/device/command`, and `ai_home_dialog <text>` posts text to `/api/v1/dialog`, applies the returned `device_mood`, and prints the assistant text. The device currently has no speaker dependency. Assistant audio is handled on the server console with browser speech synthesis, while the device receives mood/actions.
 
-`ai_home_camera_snapshot` captures a 240x240 OV3660 RGB565 frame, posts it as a browser-readable BMP to `/api/v1/camera/frame`, and the web console can render it through `/api/v1/camera/latest`.
+`ai_home_camera_snapshot` captures a 240x240 OV3660 RGB565 frame, posts it as a browser-readable BMP to `/api/v1/camera/frame`, and the web console can render it through `/api/v1/camera/latest`. The same snapshot path can be triggered by a queued `capture_camera:snapshot` command.
 
 `ota_check` downloads and parses the backend OTA manifest without flashing. `ota_update` downloads the manifest, applies the manifest `firmware_url` through `esp_https_ota`, reports OTA state back to `/api/v1/ota/report`, and reboots after a successful update.
 

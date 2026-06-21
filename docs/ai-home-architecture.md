@@ -4,14 +4,14 @@ This project is split into three low-coupling parts:
 
 - `idf/`: ESP32-S31 firmware for display, touch, camera bring-up, serial diagnostics, OTA partition readiness, wake/emotion commands.
 - `server/`: Rust AI Home backend for assistant state, local LLM proxying, camera frame ingestion, WebSocket events, browser-based server speech, and OTA manifests.
-- `server/static/`: Web console using the same HTTP/WebSocket API that a future mobile client should use, including dialog, camera preview, state/events, and queued device commands.
+- `server/static/`: Web console using the same HTTP/WebSocket API that a future mobile client should use, including dialog, camera preview, state/events, queued mood commands, and queued camera snapshot commands.
 
 ## Runtime Flow
 
 1. Device connects to Wi-Fi with `wifi_connect <ssid> <password>`; successful credentials are stored in NVS and can reconnect on boot through `wifi_autoconnect`.
 2. `ai_home_server <url>` stores the Rust backend URL in NVS.
 3. `ai_home_ping` reports device health to `POST /api/v1/device/heartbeat`.
-4. `ai_home_poll` fetches queued server actions from `POST /api/v1/device/command`; the ESP applies `set_mood` to the OuO renderer.
+4. `ai_home_poll` fetches queued server actions from `POST /api/v1/device/command`; the ESP applies `set_mood` to the OuO renderer or runs `capture_camera:snapshot` through the camera upload path.
 5. Wake events go to `POST /api/v1/wake`; manual wake diagnostics remain available with `wake <phrase> [confidence]`.
 6. `ai_home_dialog <text>` posts dialog text to `POST /api/v1/dialog`; the server calls the local OpenAI-compatible model endpoint configured by `OUO_LLM_BASE_URL`.
 7. The server maps assistant/user context to a device mood and returns a stable `device_mood`; the device applies it to the OuO renderer.
