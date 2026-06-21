@@ -116,6 +116,30 @@ function Queue-ServerCommand {
     return "`r`n>>> queue_server_command $Kind`:$Value`r`nqueued=$($queued.queued)`r`n"
 }
 
+function Drain-ServerCommands {
+    param(
+        [string]$ServerUrl,
+        [int]$TimeoutSec,
+        [int]$MaxDrain = 16
+    )
+
+    $text = "`r`n>>> drain_server_commands`r`n"
+    for ($i = 0; $i -lt $MaxDrain; $i++) {
+        $polled = Invoke-RestMethod -Method Post -Uri (Join-Url $ServerUrl "/api/v1/device/command") -ContentType "application/json" -Body (@{
+            device_id = "ouo-s31-korvo-1"
+        } | ConvertTo-Json -Compress) -TimeoutSec $TimeoutSec
+        $actions = @($polled.actions)
+        if ($actions.Count -eq 0) {
+            $text += "drained=$i queued=$($polled.queued)`r`n"
+            return $text
+        }
+        foreach ($action in $actions) {
+            $text += "discarded=$($action.kind):$($action.value)`r`n"
+        }
+    }
+    throw "Server command queue did not drain after $MaxDrain polls. Check the log: $LogPath"
+}
+
 if ([string]::IsNullOrWhiteSpace($Port)) {
     $Port = $env:OUO_SERIAL_PORT
 }
@@ -186,6 +210,7 @@ try {
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_server $ServerUrl" -Label "ai_home_server $ServerUrl" -WaitMs 1000
     $output += Send-DeviceCommand -Serial $serial -Command ("ota_manifest_url {0}" -f (Join-Url $ServerUrl "/api/v1/ota/manifest")) -Label "ota_manifest_url <server>/api/v1/ota/manifest" -WaitMs 1000
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_ping" -Label "ai_home_ping" -WaitMs 7000
+    $output += Drain-ServerCommands -ServerUrl $ServerUrl -TimeoutSec $TimeoutSec
     $output += Queue-ServerCommand -ServerUrl $ServerUrl -Kind "set_mood" -Value "sad" -TimeoutSec $TimeoutSec
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_poll" -Label "ai_home_poll" -WaitMs 7000
     $output += Send-DeviceCommand -Serial $serial -Command "wake ouo 0.91" -Label "wake ouo 0.91" -WaitMs 3000
