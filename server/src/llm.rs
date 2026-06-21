@@ -21,6 +21,18 @@ impl LlmClient {
         }
     }
 
+    #[cfg(test)]
+    pub fn unavailable_for_tests() -> Self {
+        Self {
+            http: Client::builder()
+                .timeout(std::time::Duration::from_millis(300))
+                .build()
+                .expect("test reqwest client"),
+            base_url: "http://127.0.0.1:9/v1/chat/completions".to_string(),
+            model: "test-unavailable".to_string(),
+        }
+    }
+
     pub async fn reply(&self, user_text: &str, context: Option<&str>) -> Result<String> {
         let system = "你是一个家庭 AI 设备的大脑。回答要短、自然、可执行；能控制家居时给出明确动作，但不要假装已经执行未知设备。";
         let prompt = match context {

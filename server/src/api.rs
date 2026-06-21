@@ -309,3 +309,253 @@ async fn events_socket(mut socket: WebSocket, state: AppState) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Method, Request},
+    };
+    use serde::de::DeserializeOwned;
+    use tower::ServiceExt;
+
+    use crate::{llm::LlmClient, types::DeviceRuntime};
+
+    fn test_app() -> Router {
+        let mut state = AppState::new();
+        state.llm = LlmClient::unavailable_for_tests();
+        router(state)
+    }
+
+    async fn get_json<T: DeserializeOwned>(app: Router, uri: &str) -> (StatusCode, T) {
+        request_json(app, Method::GET, uri, None).await
+    }
+
+    async fn post_json<T: DeserializeOwned>(
+        app: Router,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, T) {
+        request_json(app, Method::POST, uri, Some(body)).await
+    }
+
+    async fn request_json<T: DeserializeOwned>(
+        app: Router,
+        method: Method,
+        uri: &str,
+        body: Option<serde_json::Value>,
+    ) -> (StatusCode, T) {
+        let mut builder = Request::builder().method(method).uri(uri);
+        if body.is_some() {
+            builder = builder.header(header::CONTENT_TYPE, "application/json");
+        }
+        let request_body = body.map_or_else(Body::empty, |value| Body::from(value.to_string()));
+        let response = app
+            .oneshot(builder.body(request_body).expect("request body"))
+            .await
+            .expect("router response");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let parsed = serde_json::from_slice::<T>(&bytes).unwrap_or_else(|err| {
+            panic!(
+                "failed to parse JSON response from {uri}: {err}; body={}",
+                String::from_utf8_lossy(&bytes)
+            )
+        });
+        (status, parsed)
+    }
+
+    #[tokio::test]
+    async fn heartbeat_and_dialog_return_firmware_parseable_json() {
+        let app = test_app();
+
+        let (status, health): (StatusCode, HealthResponse) = get_json(app.clone(), "/health").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(health.ok);
+        assert_eq!(health.service, "ouo-ai-home-server");
+
+        let (status, heartbeat): (StatusCode, DeviceRuntime) = post_json(
+            app.clone(),
+            "/api/v1/device/heartbeat",
+            json!({
+                "device_id": "ouo-s31-test",
+                "firmware_version": "0.2.0-test",
+                "ip": "192.168.1.23",
+                "battery_percent": null,
+                "current_mood": "smile"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(heartbeat.device_id, "ouo-s31-test");
+        assert!(heartbeat.online);
+        assert_eq!(heartbeat.assistant.last_emotion, crate::types::Emotion::Smile);
+
+        let (status, dialog): (StatusCode, DialogResponse) = post_json(
+            app,
+            "/api/v1/dialog",
+            json!({
+                "device_id": "ouo-s31-test",
+                "text": "你好",
+                "locale": "zh-CN",
+                "context": "protocol test"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(!dialog.text.trim().is_empty());
+        assert!(!dialog.device_mood.trim().is_empty());
+        assert!(!dialog.actions.is_empty());
+        assert_eq!(dialog.actions[0].kind, "set_mood");
+        assert_eq!(dialog.actions[0].value, dialog.device_mood);
+    }
+
+    #[tokio::test]
+    async fn device_command_queue_is_addressed_and_fifo() {
+        let app = test_app();
+
+        let (status, queued): (StatusCode, DeviceCommandResponse) = post_json(
+            app.clone(),
+            "/api/v1/device/command",
+            json!({
+                "device_id": "device-a",
+                "kind": "set_mood",
+                "value": "sad"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(queued.actions.len(), 0);
+        assert_eq!(queued.queued, 1);
+
+        let (status, empty): (StatusCode, DeviceCommandResponse) = post_json(
+            app.clone(),
+            "/api/v1/device/command",
+            json!({ "device_id": "device-b" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(empty.actions.is_empty());
+        assert_eq!(empty.queued, 1);
+
+        let (status, polled): (StatusCode, DeviceCommandResponse) = post_json(
+            app.clone(),
+            "/api/v1/device/command",
+            json!({ "device_id": "device-a" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(polled.actions.len(), 1);
+        assert_eq!(polled.actions[0].kind, "set_mood");
+        assert_eq!(polled.actions[0].value, "sad");
+        assert_eq!(polled.queued, 0);
+
+        let (status, _queued_wildcard): (StatusCode, DeviceCommandResponse) = post_json(
+            app.clone(),
+            "/api/v1/device/command",
+            json!({
+                "device_id": "*",
+                "kind": "capture_camera",
+                "value": "snapshot"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, wildcard): (StatusCode, DeviceCommandResponse) = post_json(
+            app,
+            "/api/v1/device/command",
+            json!({ "device_id": "device-b" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(wildcard.actions.len(), 1);
+        assert_eq!(wildcard.actions[0].kind, "capture_camera");
+        assert_eq!(wildcard.actions[0].value, "snapshot");
+    }
+
+    #[tokio::test]
+    async fn camera_and_ota_endpoints_keep_device_contract() {
+        let app = test_app();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/camera/latest")
+                    .body(Body::empty())
+                    .expect("request body"),
+            )
+            .await
+            .expect("router response");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let bmp_1x1 = "Qk06AAAAAAAAADYAAAAoAAAAAQAAAP////8BABgAAAAAAAQAAAATCwAAEwsAAAAAAAAAAAAA////AA==";
+        let (status, frame): (StatusCode, CameraFrameMeta) = post_json(
+            app.clone(),
+            "/api/v1/camera/frame",
+            json!({
+                "device_id": "ouo-s31-test",
+                "mime": "image/bmp",
+                "width": 1,
+                "height": 1,
+                "image_base64": bmp_1x1
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(frame.device_id, "ouo-s31-test");
+        assert_eq!(frame.mime, "image/bmp");
+        assert!(frame.bytes > 0);
+
+        let latest = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/api/v1/camera/latest")
+                    .body(Body::empty())
+                    .expect("request body"),
+            )
+            .await
+            .expect("router response");
+        assert_eq!(latest.status(), StatusCode::OK);
+        assert_eq!(
+            latest.headers().get(header::CONTENT_TYPE).unwrap(),
+            "image/bmp"
+        );
+        let latest_bytes = to_bytes(latest.into_body(), usize::MAX)
+            .await
+            .expect("camera bytes");
+        assert_eq!(latest_bytes.len(), frame.bytes);
+
+        let (status, manifest): (StatusCode, OtaManifest) =
+            get_json(app.clone(), "/api/v1/ota/manifest?channel=test").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(manifest.channel, "test");
+        assert!(!manifest.version.trim().is_empty());
+        assert!(!manifest.firmware_url.trim().is_empty());
+        assert!(!manifest.sha256.trim().is_empty());
+        assert!(manifest.size > 0);
+
+        let (status, ota): (StatusCode, OtaRuntime) = post_json(
+            app,
+            "/api/v1/ota/report",
+            json!({
+                "device_id": "ouo-s31-test",
+                "current_version": "0.2.0-test",
+                "target_version": manifest.version,
+                "status": "test_ok",
+                "detail": "api unit test"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(ota.last_status, "test_ok");
+        assert_eq!(ota.current_version.as_deref(), Some("0.2.0-test"));
+    }
+}

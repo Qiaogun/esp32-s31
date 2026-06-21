@@ -108,6 +108,7 @@ GET  /api/v1/events
 Backend smoke test:
 
 ```powershell
+cargo test --manifest-path server\Cargo.toml
 .\scripts\smoke-ai-home-backend.ps1 -BaseUrl http://127.0.0.1:8787
 ```
 
