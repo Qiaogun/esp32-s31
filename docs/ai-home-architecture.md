@@ -4,7 +4,7 @@ This project is split into three low-coupling parts:
 
 - `idf/`: ESP32-S31 firmware for display, touch, camera bring-up, serial diagnostics, OTA partition readiness, wake/emotion commands.
 - `server/`: Rust AI Home backend for assistant state, local LLM proxying, camera frame ingestion, WebSocket events, browser-based server speech, and OTA manifests.
-- `server/static/`: Web console using the same HTTP/WebSocket API that a future mobile client should use.
+- `server/static/`: Web console using the same HTTP/WebSocket API that a future mobile client should use, including dialog, camera preview, state/events, and queued device commands.
 
 ## Runtime Flow
 

@@ -15,6 +15,7 @@ body {
 }
 
 button,
+select,
 textarea {
   font: inherit;
 }
@@ -51,7 +52,8 @@ h2 {
 }
 
 #status,
-#camera-meta {
+#camera-meta,
+#command-status {
   margin-top: 6px;
   color: #b9b5ac;
   font-size: 13px;
@@ -102,6 +104,23 @@ textarea {
   background: #0e100f;
   color: #f3f0ea;
   padding: 10px;
+}
+
+label {
+  display: block;
+  margin-bottom: 8px;
+  color: #b9b5ac;
+  font-size: 13px;
+}
+
+select {
+  width: 100%;
+  min-height: 38px;
+  border-radius: 6px;
+  border: 1px solid #3c403d;
+  background: #0e100f;
+  color: #f3f0ea;
+  padding: 0 10px;
 }
 
 button {

@@ -6,6 +6,9 @@ const cameraMetaEl = document.querySelector("#camera-meta");
 const replyEl = document.querySelector("#reply");
 const dialogForm = document.querySelector("#dialog-form");
 const dialogText = document.querySelector("#dialog-text");
+const commandForm = document.querySelector("#command-form");
+const commandMood = document.querySelector("#command-mood");
+const commandStatus = document.querySelector("#command-status");
 const speakToggle = document.querySelector("#speak-toggle");
 const refreshCamera = document.querySelector("#refresh-camera");
 
@@ -71,6 +74,11 @@ function connectEvents() {
       replyEl.textContent = event.payload.text;
       speak(event.payload.server_audio.text);
     }
+    if (event.type === "command") {
+      const actions = event.payload.actions || [];
+      const actionText = actions.map((action) => `${action.kind}:${action.value}`).join(", ") || "queued";
+      commandStatus.textContent = `${event.payload.device_id} · ${actionText} · remaining ${event.payload.queued}`;
+    }
   };
   ws.onclose = () => {
     statusEl.textContent = "event stream reconnecting...";
@@ -94,6 +102,27 @@ dialogForm.addEventListener("submit", async (event) => {
   replyEl.textContent = data.text;
   speak(data.server_audio.text);
   await loadState();
+});
+
+commandForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const mood = commandMood.value;
+  commandStatus.textContent = "queueing...";
+  const res = await fetch("/api/v1/device/command", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      device_id: "ouo-s31-korvo-1",
+      kind: "set_mood",
+      value: mood,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    commandStatus.textContent = data.error || "command failed";
+    return;
+  }
+  commandStatus.textContent = `queued set_mood:${mood} · remaining ${data.queued}`;
 });
 
 speakToggle.addEventListener("click", () => {

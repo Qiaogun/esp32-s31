@@ -36,6 +36,27 @@
         </article>
 
         <article class="panel">
+          <h2>Device Command</h2>
+          <form id="command-form">
+            <label for="command-mood">Queued mood</label>
+            <select id="command-mood">
+              <option value="smile">smile</option>
+              <option value="sad">sad</option>
+              <option value="surprise">surprise</option>
+              <option value="blink">blink</option>
+              <option value="cheeky">cheeky</option>
+              <option value="grump">grump</option>
+              <option value="upset">upset</option>
+              <option value="squint">squint</option>
+              <option value="blank">blank</option>
+              <option value="frown">frown</option>
+            </select>
+            <button type="submit">Queue set_mood</button>
+          </form>
+          <p id="command-status">Waiting for command</p>
+        </article>
+
+        <article class="panel">
           <h2>Device State</h2>
           <pre id="state">{}</pre>
         </article>
