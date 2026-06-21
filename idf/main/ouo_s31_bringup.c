@@ -165,6 +165,7 @@ static char s_wifi_password[65] = "";
 static char s_last_ota_version[32] = "";
 static char s_last_ota_status[32] = "idle";
 static char s_last_wake_phrase[64] = "";
+static char s_current_mood[24] = "smile";
 static uint8_t s_last_wake_confidence = 0;
 static bool s_wifi_autoconnect = true;
 static bool s_ai_home_autostart = false;
@@ -172,7 +173,7 @@ static TaskHandle_t s_ai_home_task_handle = NULL;
 static esp_err_t ensure_korvo_lcd_ready(void);
 static ouo_state_t s_state = {
     .board = "ESP32-S31-Korvo-1",
-    .mood = "smile",
+    .mood = s_current_mood,
     .display_mode = "booting",
     .stretch = true,
     .tilt = true,
@@ -235,6 +236,23 @@ static const char* menu_mood_name(int index) {
         return "smile";
     }
     return moods[index];
+}
+
+static const char* canonical_mood_name(const char* mood) {
+    return strcmp(mood, "angry") == 0 ? "grump" : mood;
+}
+
+static bool set_current_mood(const char* mood) {
+    if (mood == NULL || !valid_mood(mood)) {
+        return false;
+    }
+    const char* canonical = canonical_mood_name(mood);
+    snprintf(s_current_mood, sizeof(s_current_mood), "%s", canonical);
+    s_state.mood = s_current_mood;
+    if (s_state.renderer_ready && !ouo_s31_renderer_set_mood(s_current_mood)) {
+        return false;
+    }
+    return true;
 }
 
 static void update_ota_manifest_url(void) {
@@ -449,10 +467,7 @@ static const char* emotion_for_text(const char* text, uint8_t* confidence) {
 }
 
 static void apply_mood_from_ai(const char* mood) {
-    s_state.mood = mood;
-    if (s_state.renderer_ready) {
-        ouo_s31_renderer_set_mood(mood);
-    }
+    (void)set_current_mood(mood);
 }
 
 static void ai_home_status_command(void) {
@@ -865,8 +880,7 @@ static void process_touch_sample(bool pressed, uint16_t x, uint16_t y, uint32_t 
         if (s_menu_open) {
             if (s_selected_menu_index >= 0) {
                 const char* mood = menu_mood_name(s_selected_menu_index);
-                s_state.mood = mood;
-                if (ouo_s31_renderer_set_mood(mood)) {
+                if (set_current_mood(mood)) {
                     printf("menu mood=%s\n", mood);
                 }
             }
@@ -2960,8 +2974,7 @@ static void process_command(char* line) {
             printf("err unknown mood\n");
             return;
         }
-        s_state.mood = strcmp(mood, "angry") == 0 ? "grump" : mood;
-        if (s_state.renderer_ready && !ouo_s31_renderer_set_mood(s_state.mood)) {
+        if (!set_current_mood(mood)) {
             printf("err renderer mood\n");
             return;
         }
