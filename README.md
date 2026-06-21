@@ -178,7 +178,7 @@ ota_manifest_url <url>
 
 `ai_home_camera_snapshot` captures a 240x240 OV3660 RGB565 frame, posts it as a browser-readable BMP to `/api/v1/camera/frame`, and the web console can render it through `/api/v1/camera/latest`. The same snapshot path can be triggered by a queued `capture_camera:snapshot` command.
 
-`ota_check` downloads and parses the backend OTA manifest without flashing. `ota_update` downloads the manifest, applies the manifest `firmware_url` through `esp_https_ota`, reports OTA state back to `/api/v1/ota/report`, and reboots after a successful update.
+`ota_check` downloads and validates the backend OTA manifest without flashing. `ota_update` downloads the manifest, verifies the firmware URL against the manifest `sha256` and `size`, applies the verified `firmware_url` through `esp_https_ota`, reports OTA state back to `/api/v1/ota/report`, and reboots after a successful update.
 
 Publish the current IDF build as a local OTA artifact:
 

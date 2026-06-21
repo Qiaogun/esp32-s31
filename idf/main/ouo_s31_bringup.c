@@ -40,6 +40,7 @@
 #include "mbedtls/base64.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "psa/crypto.h"
 #include "s31_ouo_renderer.h"
 
 #define OUO_SCAN_MAX_APS 12
@@ -79,6 +80,7 @@
 #define OUO_FIRMWARE_VERSION "0.2.0-ai-home-link"
 #define OUO_AI_HTTP_TIMEOUT_MS 8000
 #define OUO_AI_CAMERA_HTTP_TIMEOUT_MS 20000
+#define OUO_OTA_HTTP_TIMEOUT_MS 60000
 #define OUO_AI_HTTP_RESPONSE_MAX 2048
 #define OUO_AI_HEARTBEAT_INTERVAL_MS 30000
 
@@ -120,6 +122,12 @@ typedef struct {
     int len;
     int cap;
 } ouo_http_response_t;
+
+typedef struct {
+    psa_hash_operation_t* op;
+    uint32_t bytes;
+    esp_err_t err;
+} ouo_sha256_download_t;
 
 typedef struct {
     char version[32];
@@ -1419,6 +1427,23 @@ static esp_err_t http_event_collect_response(esp_http_client_event_t* evt) {
     return ESP_OK;
 }
 
+static esp_err_t http_event_sha256_download(esp_http_client_event_t* evt) {
+    if (evt->event_id != HTTP_EVENT_ON_DATA || evt->data == NULL || evt->data_len <= 0) {
+        return ESP_OK;
+    }
+    ouo_sha256_download_t* download = (ouo_sha256_download_t*)evt->user_data;
+    if (download == NULL || download->op == NULL) {
+        return ESP_OK;
+    }
+    psa_status_t status = psa_hash_update(download->op, (const uint8_t*)evt->data, (size_t)evt->data_len);
+    if (status != PSA_SUCCESS) {
+        download->err = ESP_FAIL;
+        return ESP_FAIL;
+    }
+    download->bytes += (uint32_t)evt->data_len;
+    return ESP_OK;
+}
+
 static void build_ai_url(char* out, size_t out_size, const char* path) {
     const char* slash = s_ai_server_url[strlen(s_ai_server_url) - 1] == '/' ? "" : "/";
     while (path[0] == '/') {
@@ -1450,6 +1475,42 @@ static void json_escape(char* out, size_t out_size, const char* input) {
         }
     }
     out[used] = '\0';
+}
+
+static bool is_hex_sha256(const char* value) {
+    if (value == NULL || strlen(value) != 64) {
+        return false;
+    }
+    for (const char* p = value; *p != '\0'; ++p) {
+        if (!isxdigit((unsigned char)*p)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void sha256_to_hex(const unsigned char digest[32], char* out, size_t out_size) {
+    static const char hex[] = "0123456789abcdef";
+    if (out == NULL || out_size < 65) {
+        return;
+    }
+    for (int i = 0; i < 32; ++i) {
+        out[i * 2] = hex[(digest[i] >> 4) & 0x0f];
+        out[i * 2 + 1] = hex[digest[i] & 0x0f];
+    }
+    out[64] = '\0';
+}
+
+static bool sha256_hex_equal(const char* expected, const char* actual) {
+    if (!is_hex_sha256(expected) || !is_hex_sha256(actual)) {
+        return false;
+    }
+    for (int i = 0; i < 64; ++i) {
+        if (tolower((unsigned char)expected[i]) != tolower((unsigned char)actual[i])) {
+            return false;
+        }
+    }
+    return true;
 }
 
 static bool json_extract_string(const char* json, const char* key, char* out, size_t out_size) {
@@ -1638,6 +1699,87 @@ static esp_err_t ai_home_fetch_ota_manifest(ouo_ota_manifest_t* manifest, char* 
     if (!ok || manifest->firmware_url[0] == '\0') {
         return ESP_ERR_INVALID_RESPONSE;
     }
+    if (manifest->size == 0 || !is_hex_sha256(manifest->sha256)) {
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t ota_verify_firmware_sha256(const ouo_ota_manifest_t* manifest, char* actual_sha256, size_t actual_sha256_size) {
+    if (manifest == NULL || actual_sha256 == NULL || actual_sha256_size < 65) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    actual_sha256[0] = '\0';
+
+    esp_err_t err = ensure_wifi_ready();
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (!wifi_is_connected()) {
+        return ESP_ERR_WIFI_NOT_CONNECT;
+    }
+
+    psa_status_t psa_status = psa_crypto_init();
+    if (psa_status != PSA_SUCCESS) {
+        return ESP_FAIL;
+    }
+
+    psa_hash_operation_t sha_op = PSA_HASH_OPERATION_INIT;
+    psa_status = psa_hash_setup(&sha_op, PSA_ALG_SHA_256);
+    if (psa_status != PSA_SUCCESS) {
+        psa_hash_abort(&sha_op);
+        return ESP_FAIL;
+    }
+
+    ouo_sha256_download_t download = {
+        .op = &sha_op,
+        .bytes = 0,
+        .err = ESP_OK,
+    };
+    esp_http_client_config_t config = {
+        .url = manifest->firmware_url,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = OUO_OTA_HTTP_TIMEOUT_MS,
+        .event_handler = http_event_sha256_download,
+        .user_data = &download,
+        .keep_alive_enable = true,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (client == NULL) {
+        psa_hash_abort(&sha_op);
+        return ESP_ERR_NO_MEM;
+    }
+
+    err = esp_http_client_perform(client);
+    int http_status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    if (err != ESP_OK) {
+        psa_hash_abort(&sha_op);
+        return err;
+    }
+    if (download.err != ESP_OK || http_status < 200 || http_status >= 300) {
+        psa_hash_abort(&sha_op);
+        return ESP_FAIL;
+    }
+    if (manifest->size > 0 && download.bytes != manifest->size) {
+        psa_hash_abort(&sha_op);
+        ESP_LOGW(TAG, "ota sha256 size mismatch expected=%" PRIu32 " actual=%" PRIu32, manifest->size, download.bytes);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    unsigned char digest[32] = {};
+    size_t digest_len = 0;
+    psa_status = psa_hash_finish(&sha_op, digest, sizeof(digest), &digest_len);
+    if (psa_status != PSA_SUCCESS || digest_len != sizeof(digest)) {
+        psa_hash_abort(&sha_op);
+        return ESP_FAIL;
+    }
+
+    sha256_to_hex(digest, actual_sha256, actual_sha256_size);
+    if (!sha256_hex_equal(manifest->sha256, actual_sha256)) {
+        ESP_LOGW(TAG, "ota sha256 mismatch expected=%s actual=%s", manifest->sha256, actual_sha256);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
     return ESP_OK;
 }
 
@@ -1680,7 +1822,7 @@ static void ota_check_command(void) {
 
     snprintf(s_last_ota_status, sizeof(s_last_ota_status), "manifest_ok");
     snprintf(s_last_ota_version, sizeof(s_last_ota_version), "%s", manifest.version);
-    printf("ota_check ok http=%d version=%s channel=%s size=%" PRIu32 " sha256=%s firmware_url=\"%s\"\n",
+    printf("ota_check ok http=%d version=%s channel=%s size=%" PRIu32 " sha256=%s sha256_valid=1 firmware_url=\"%s\"\n",
            status_code,
            manifest.version,
            manifest.channel[0] != '\0' ? manifest.channel : "unknown",
@@ -1702,17 +1844,38 @@ static void ota_update_command(void) {
         return;
     }
 
-    snprintf(s_last_ota_status, sizeof(s_last_ota_status), "downloading");
+    snprintf(s_last_ota_status, sizeof(s_last_ota_status), "verifying");
     snprintf(s_last_ota_version, sizeof(s_last_ota_version), "%s", manifest.version);
-    printf("ota_update begin version=%s size=%" PRIu32 " url=\"%s\"\n",
+    printf("ota_update verify version=%s size=%" PRIu32 " sha256=%s url=\"%s\"\n",
            manifest.version,
            manifest.size,
+           manifest.sha256,
+           manifest.firmware_url);
+    ai_home_report_ota("verifying", manifest.version, manifest.firmware_url);
+
+    char actual_sha256[65] = {};
+    err = ota_verify_firmware_sha256(&manifest, actual_sha256, sizeof(actual_sha256));
+    if (err != ESP_OK) {
+        snprintf(s_last_ota_status, sizeof(s_last_ota_status), "verify_failed");
+        printf("ota_update verify_err=%s expected_sha256=%s actual_sha256=%s\n",
+               esp_err_to_name(err),
+               manifest.sha256,
+               actual_sha256[0] != '\0' ? actual_sha256 : "none");
+        ai_home_report_ota("verify_failed", manifest.version, esp_err_to_name(err));
+        return;
+    }
+
+    snprintf(s_last_ota_status, sizeof(s_last_ota_status), "downloading");
+    printf("ota_update begin version=%s size=%" PRIu32 " sha256=%s url=\"%s\"\n",
+           manifest.version,
+           manifest.size,
+           actual_sha256,
            manifest.firmware_url);
     ai_home_report_ota("downloading", manifest.version, manifest.firmware_url);
 
     esp_http_client_config_t http_config = {
         .url = manifest.firmware_url,
-        .timeout_ms = 30000,
+        .timeout_ms = OUO_OTA_HTTP_TIMEOUT_MS,
         .keep_alive_enable = true,
     };
     esp_https_ota_config_t ota_config = {
