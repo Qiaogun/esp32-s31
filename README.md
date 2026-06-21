@@ -124,6 +124,14 @@ Device-to-server smoke test after flashing and starting the backend:
 
 Use the PC's LAN IP for `-ServerUrl`; the ESP cannot reach the backend through `127.0.0.1`. `prepare-ai-home-lan.ps1` detects that IP, republishes the OTA manifest with the LAN firmware URL, and prints the matching device smoke command.
 
+Full closed-loop smoke after flashing:
+
+```powershell
+.\scripts\smoke-ai-home-closed-loop.ps1 -Port COM5 -Ssid <ssid> -Password <password>
+```
+
+The closed-loop script starts the Rust backend if needed, publishes OTA metadata for the detected LAN URL, runs backend HTTP smoke, and then runs the serial device smoke.
+
 The ESP firmware exposes matching serial diagnostics:
 
 ```text

@@ -55,3 +55,5 @@ For a dev OTA package:
 3. The script copies the binary to `server/ota/ouo_s31_bringup.bin` and updates `server/ota/manifest.json` with `version`, `sha256`, and `size`.
 4. Confirm from the device with `ota_check`.
 5. Apply from the device with `ota_update`; successful updates reboot into the new image.
+
+For full device-to-server smoke after flashing, `scripts/smoke-ai-home-closed-loop.ps1` starts the Rust backend if needed, publishes LAN OTA metadata, validates backend HTTP endpoints, and runs the serial device smoke when Wi-Fi credentials are supplied.
