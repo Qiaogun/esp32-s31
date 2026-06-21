@@ -214,6 +214,7 @@ try {
     $output += Queue-ServerCommand -ServerUrl $ServerUrl -Kind "set_mood" -Value "sad" -TimeoutSec $TimeoutSec
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_poll" -Label "ai_home_poll" -WaitMs 7000
     $output += Send-DeviceCommand -Serial $serial -Command "wake ouo 0.91" -Label "wake ouo 0.91" -WaitMs 3000
+    $output += Send-DeviceCommand -Serial $serial -Command "ai_home_poll" -Label "ai_home_poll wake_mood" -WaitMs 7000
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_dialog $DialogText" -Label "ai_home_dialog <text>" -WaitMs 15000
 
     if (-not $SkipCameraSnapshot) {
@@ -238,6 +239,7 @@ try {
     Assert-Contains -Text $output -Needle "ai_home_ping ok http=200" -Message "Device heartbeat did not reach backend"
     Assert-Contains -Text $output -Needle "ai_home_poll ok http=200 applied=1 mood=sad" -Message "Device did not apply server command"
     Assert-Contains -Text $output -Needle "wake ok phrase=" -Message "Wake diagnostic did not run"
+    Assert-Contains -Text $output -Needle "ai_home_poll ok http=200 applied=1 mood=blink" -Message "Device did not apply wake mood command"
     Assert-Contains -Text $output -Needle "ai_home_dialog ok http=200" -Message "Dialog did not reach backend"
     if (-not $SkipCameraSnapshot) {
         Assert-Contains -Text $output -Needle "queue_server_command capture_camera:snapshot" -Message "Server did not queue camera capture command"
