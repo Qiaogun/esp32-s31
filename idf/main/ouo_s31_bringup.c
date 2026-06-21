@@ -19,6 +19,7 @@
 #include "esp_event.h"
 #include "esp_flash.h"
 #include "esp_heap_caps.h"
+#include "esp_https_ota.h"
 #include "esp_http_client.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_rgb.h"
@@ -118,6 +119,14 @@ typedef struct {
     int cap;
 } ouo_http_response_t;
 
+typedef struct {
+    char version[32];
+    char channel[16];
+    char firmware_url[192];
+    char sha256[80];
+    uint32_t size;
+} ouo_ota_manifest_t;
+
 static const char* TAG = "ouo_s31";
 static bool s_wifi_ready = false;
 static bool s_storage_ready = false;
@@ -141,6 +150,8 @@ static volatile uint32_t s_camera_preview_new_trans = 0;
 static volatile uint32_t s_camera_preview_finished_trans = 0;
 static char s_ai_server_url[128] = "http://127.0.0.1:8787";
 static char s_ota_manifest_url[160] = "http://127.0.0.1:8787/api/v1/ota/manifest";
+static char s_last_ota_version[32] = "";
+static char s_last_ota_status[32] = "idle";
 static char s_last_wake_phrase[64] = "";
 static uint8_t s_last_wake_confidence = 0;
 static bool s_ai_home_autostart = false;
@@ -228,6 +239,9 @@ static void save_ai_home_config(void) {
         err = nvs_set_u8(nvs, "ai_autostart", s_ai_home_autostart ? 1 : 0);
     }
     if (err == ESP_OK) {
+        err = nvs_set_str(nvs, "ota_manifest", s_ota_manifest_url);
+    }
+    if (err == ESP_OK) {
         err = nvs_commit(nvs);
     }
     if (err != ESP_OK) {
@@ -258,8 +272,14 @@ static void load_ai_home_config(void) {
         ESP_LOGW(TAG, "nvs_get_u8 ai_autostart failed: %s", esp_err_to_name(err));
     }
 
-    nvs_close(nvs);
     update_ota_manifest_url();
+    len = sizeof(s_ota_manifest_url);
+    err = nvs_get_str(nvs, "ota_manifest", s_ota_manifest_url, &len);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "nvs_get_str ota_manifest failed: %s", esp_err_to_name(err));
+    }
+
+    nvs_close(nvs);
 }
 
 static void print_help(void) {
@@ -280,6 +300,8 @@ static void print_help(void) {
     printf("  wake <phrase> [0.0-1.0]\n");
     printf("  emotion_map <text>\n");
     printf("  ota_status\n");
+    printf("  ota_check\n");
+    printf("  ota_update\n");
     printf("  ota_manifest_url <url>\n");
     printf("  board_info\n");
     printf("  lcd_probe\n");
@@ -429,6 +451,7 @@ static void ota_manifest_url_command(const char* args) {
         return;
     }
     snprintf(s_ota_manifest_url, sizeof(s_ota_manifest_url), "%s", url);
+    save_ai_home_config();
     printf("ok ota_manifest_url=\"%s\"\n", s_ota_manifest_url);
 }
 
@@ -909,6 +932,9 @@ static void ota_status_command(void) {
     const esp_partition_t* boot = esp_ota_get_boot_partition();
     const esp_partition_t* next = esp_ota_get_next_update_partition(NULL);
     printf("ota firmware=%s manifest_url=\"%s\"\n", OUO_FIRMWARE_VERSION, s_ota_manifest_url);
+    printf("ota last_status=%s last_target_version=%s\n",
+           s_last_ota_status,
+           s_last_ota_version[0] != '\0' ? s_last_ota_version : "none");
     printf("ota running=%s boot=%s next_update=%s\n",
            running != NULL ? running->label : "unknown",
            boot != NULL ? boot->label : "unknown",
@@ -1331,6 +1357,73 @@ static bool json_extract_string(const char* json, const char* key, char* out, si
     return used > 0 || *cursor == '"';
 }
 
+static bool json_extract_u32(const char* json, const char* key, uint32_t* out) {
+    if (json == NULL || key == NULL || out == NULL) {
+        return false;
+    }
+    char pattern[48] = {};
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    const char* cursor = strstr(json, pattern);
+    if (cursor == NULL) {
+        return false;
+    }
+    cursor = strchr(cursor + strlen(pattern), ':');
+    if (cursor == NULL) {
+        return false;
+    }
+    cursor++;
+    while (*cursor != '\0' && isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+    char* end = NULL;
+    unsigned long value = strtoul(cursor, &end, 10);
+    if (end == cursor) {
+        return false;
+    }
+    *out = (uint32_t)value;
+    return true;
+}
+
+static esp_err_t ai_home_get_url(const char* url, char* response, size_t response_size, int* status_code) {
+    if (status_code != NULL) {
+        *status_code = 0;
+    }
+    if (response != NULL && response_size > 0) {
+        response[0] = '\0';
+    }
+
+    esp_err_t err = ensure_wifi_ready();
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (!wifi_is_connected()) {
+        return ESP_ERR_WIFI_NOT_CONNECT;
+    }
+
+    ouo_http_response_t collector = {
+        .data = response,
+        .len = 0,
+        .cap = (int)response_size,
+    };
+    esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = OUO_AI_HTTP_TIMEOUT_MS,
+        .event_handler = http_event_collect_response,
+        .user_data = &collector,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (client == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    err = esp_http_client_perform(client);
+    if (status_code != NULL) {
+        *status_code = esp_http_client_get_status_code(client);
+    }
+    esp_http_client_cleanup(client);
+    return err;
+}
+
 static esp_err_t ai_home_post_json(const char* path, const char* body, char* response, size_t response_size, int* status_code) {
     if (status_code != NULL) {
         *status_code = 0;
@@ -1374,6 +1467,122 @@ static esp_err_t ai_home_post_json(const char* path, const char* body, char* res
     }
     esp_http_client_cleanup(client);
     return err;
+}
+
+static esp_err_t ai_home_fetch_ota_manifest(ouo_ota_manifest_t* manifest, char* raw, size_t raw_size, int* status_code) {
+    if (manifest == NULL || raw == NULL || raw_size == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    memset(manifest, 0, sizeof(*manifest));
+    esp_err_t err = ai_home_get_url(s_ota_manifest_url, raw, raw_size, status_code);
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (status_code != NULL && (*status_code < 200 || *status_code >= 300)) {
+        return ESP_FAIL;
+    }
+    bool ok = json_extract_string(raw, "version", manifest->version, sizeof(manifest->version));
+    ok = json_extract_string(raw, "firmware_url", manifest->firmware_url, sizeof(manifest->firmware_url)) && ok;
+    json_extract_string(raw, "channel", manifest->channel, sizeof(manifest->channel));
+    json_extract_string(raw, "sha256", manifest->sha256, sizeof(manifest->sha256));
+    json_extract_u32(raw, "size", &manifest->size);
+    if (!ok || manifest->firmware_url[0] == '\0') {
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    return ESP_OK;
+}
+
+static void ai_home_report_ota(const char* status, const char* target_version, const char* detail) {
+    char escaped_detail[160] = {};
+    char escaped_target[64] = {};
+    json_escape(escaped_detail, sizeof(escaped_detail), detail == NULL ? "" : detail);
+    json_escape(escaped_target, sizeof(escaped_target), target_version == NULL ? "" : target_version);
+    char body[384] = {};
+    snprintf(body, sizeof(body),
+             "{\"device_id\":\"ouo-s31-korvo-1\",\"current_version\":\"%s\",\"target_version\":\"%s\",\"status\":\"%s\",\"detail\":\"%s\"}",
+             OUO_FIRMWARE_VERSION,
+             escaped_target,
+             status == NULL ? "unknown" : status,
+             escaped_detail);
+
+    char response[512] = {};
+    int status_code = 0;
+    esp_err_t err = ai_home_post_json("/api/v1/ota/report", body, response, sizeof(response), &status_code);
+    if (err != ESP_OK || status_code < 200 || status_code >= 300) {
+        ESP_LOGW(TAG, "ai_home ota report failed err=%s http=%d", esp_err_to_name(err), status_code);
+    }
+}
+
+static void ota_check_command(void) {
+    char raw[OUO_AI_HTTP_RESPONSE_MAX] = {};
+    int status_code = 0;
+    ouo_ota_manifest_t manifest = {};
+    esp_err_t err = ai_home_fetch_ota_manifest(&manifest, raw, sizeof(raw), &status_code);
+    if (err != ESP_OK) {
+        snprintf(s_last_ota_status, sizeof(s_last_ota_status), "check_failed");
+        printf("ota_check err=%s http=%d manifest_url=\"%s\" response=\"%s\"\n",
+               esp_err_to_name(err),
+               status_code,
+               s_ota_manifest_url,
+               raw);
+        ai_home_report_ota("check_failed", NULL, esp_err_to_name(err));
+        return;
+    }
+
+    snprintf(s_last_ota_status, sizeof(s_last_ota_status), "manifest_ok");
+    snprintf(s_last_ota_version, sizeof(s_last_ota_version), "%s", manifest.version);
+    printf("ota_check ok http=%d version=%s channel=%s size=%" PRIu32 " sha256=%s firmware_url=\"%s\"\n",
+           status_code,
+           manifest.version,
+           manifest.channel[0] != '\0' ? manifest.channel : "unknown",
+           manifest.size,
+           manifest.sha256[0] != '\0' ? manifest.sha256 : "none",
+           manifest.firmware_url);
+    ai_home_report_ota("manifest_ok", manifest.version, manifest.firmware_url);
+}
+
+static void ota_update_command(void) {
+    char raw[OUO_AI_HTTP_RESPONSE_MAX] = {};
+    int status_code = 0;
+    ouo_ota_manifest_t manifest = {};
+    esp_err_t err = ai_home_fetch_ota_manifest(&manifest, raw, sizeof(raw), &status_code);
+    if (err != ESP_OK) {
+        snprintf(s_last_ota_status, sizeof(s_last_ota_status), "manifest_failed");
+        printf("ota_update manifest_err=%s http=%d response=\"%s\"\n", esp_err_to_name(err), status_code, raw);
+        ai_home_report_ota("manifest_failed", NULL, esp_err_to_name(err));
+        return;
+    }
+
+    snprintf(s_last_ota_status, sizeof(s_last_ota_status), "downloading");
+    snprintf(s_last_ota_version, sizeof(s_last_ota_version), "%s", manifest.version);
+    printf("ota_update begin version=%s size=%" PRIu32 " url=\"%s\"\n",
+           manifest.version,
+           manifest.size,
+           manifest.firmware_url);
+    ai_home_report_ota("downloading", manifest.version, manifest.firmware_url);
+
+    esp_http_client_config_t http_config = {
+        .url = manifest.firmware_url,
+        .timeout_ms = 30000,
+        .keep_alive_enable = true,
+    };
+    esp_https_ota_config_t ota_config = {
+        .http_config = &http_config,
+    };
+    err = esp_https_ota(&ota_config);
+    if (err != ESP_OK) {
+        snprintf(s_last_ota_status, sizeof(s_last_ota_status), "failed");
+        printf("ota_update err=%s\n", esp_err_to_name(err));
+        ai_home_report_ota("failed", manifest.version, esp_err_to_name(err));
+        return;
+    }
+
+    snprintf(s_last_ota_status, sizeof(s_last_ota_status), "rebooting");
+    printf("ota_update ok version=%s rebooting\n", manifest.version);
+    ai_home_report_ota("rebooting", manifest.version, "ota applied");
+    fflush(stdout);
+    vTaskDelay(pdMS_TO_TICKS(250));
+    esp_restart();
 }
 
 static void ai_home_post_wake_event(const char* phrase, float confidence) {
@@ -1964,6 +2173,14 @@ static void process_command(char* line) {
         ota_status_command();
         return;
     }
+    if (strcmp(line, "ota_check") == 0) {
+        ota_check_command();
+        return;
+    }
+    if (strcmp(line, "ota_update") == 0) {
+        ota_update_command();
+        return;
+    }
     if (strncmp(line, "ota_manifest_url ", 17) == 0) {
         ota_manifest_url_command(original + 17);
         return;
@@ -2308,7 +2525,7 @@ void app_main(void) {
     load_boot_count();
     load_ai_home_config();
     ESP_LOGI(TAG, "OuO ESP32-S31 bring-up started");
-    ESP_LOGI(TAG, "serial commands: help, status, diag, mac, partitions, ota_status, ai_home_status, ai_home_server <url>, ai_home_ping, ai_home_dialog <text>, ai_home_autostart on|off, wake <phrase> [confidence], emotion_map <text>, board_info, storage_test, wifi_scan, wifi_status, wifi_connect <ssid> <password>, camera_probe, camera_preview [seconds], camera_focus, lcd_probe, lcd_test, renderer_test, touch_status, korvo_led_test [gpio], function_led_test, mood <name>, blush on|off, option <key> on|off, reboot");
+    ESP_LOGI(TAG, "serial commands: help, status, diag, mac, partitions, ota_status, ota_check, ota_update, ai_home_status, ai_home_server <url>, ai_home_ping, ai_home_dialog <text>, ai_home_autostart on|off, wake <phrase> [confidence], emotion_map <text>, board_info, storage_test, wifi_scan, wifi_status, wifi_connect <ssid> <password>, camera_probe, camera_preview [seconds], camera_focus, lcd_probe, lcd_test, renderer_test, touch_status, korvo_led_test [gpio], function_led_test, mood <name>, blush on|off, option <key> on|off, reboot");
     renderer_test_command();
     print_status();
 

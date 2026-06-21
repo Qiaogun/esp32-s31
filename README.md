@@ -108,10 +108,21 @@ ai_home_autostart on|off
 wake <phrase> [0.0-1.0]
 emotion_map <text>
 ota_status
+ota_check
+ota_update
 ota_manifest_url <url>
 ```
 
 `ai_home_server` and `ai_home_autostart` are persisted in NVS. After Wi-Fi is connected, `ai_home_ping` posts a heartbeat to the Rust backend, and `ai_home_dialog <text>` posts text to `/api/v1/dialog`, applies the returned `device_mood`, and prints the assistant text. The device currently has no speaker dependency. Assistant audio is handled on the server console with browser speech synthesis, while the device receives mood/actions.
+
+`ota_check` downloads and parses the backend OTA manifest without flashing. `ota_update` downloads the manifest, applies the manifest `firmware_url` through `esp_https_ota`, reports OTA state back to `/api/v1/ota/report`, and reboots after a successful update.
+
+Publish the current IDF build as a local OTA artifact:
+
+```powershell
+.\scripts\build-idf.ps1
+.\scripts\publish-ota.ps1 -Version 0.2.0-ai-home-link -BaseUrl http://<pc-ip>:8787
+```
 
 Available environments:
 

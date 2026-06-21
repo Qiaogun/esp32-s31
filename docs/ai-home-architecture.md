@@ -15,7 +15,7 @@ This project is split into three low-coupling parts:
 5. `ai_home_dialog <text>` posts dialog text to `POST /api/v1/dialog`; the server calls the local OpenAI-compatible model endpoint configured by `OUO_LLM_BASE_URL`.
 6. The server maps assistant/user context to a device mood and returns a stable `device_mood`; the device applies it to the OuO renderer.
 7. Camera frames can be uploaded to `POST /api/v1/camera/frame`; the web console renders `GET /api/v1/camera/latest`.
-8. OTA metadata is served by `GET /api/v1/ota/manifest`. Firmware binaries are served from `/ota/`.
+8. OTA metadata is served by `GET /api/v1/ota/manifest`; the device can verify it with `ota_check` and apply it with `ota_update`.
 
 ## Stable API Surface
 
@@ -51,8 +51,7 @@ The ESP partition table now includes `factory`, `ota_0`, `ota_1`, and `otadata`.
 For a dev OTA package:
 
 1. Build `idf/build/ouo_s31_bringup.bin`.
-2. Copy it to `server/ota/ouo_s31_bringup.bin`.
-3. Update `server/ota/manifest.json` with `version`, `sha256`, and `size`.
-4. Confirm from the device with `ota_status`.
-
-The current firmware exposes OTA readiness and manifest configuration. The next step is wiring the manifest download to `esp_https_ota`.
+2. Run `scripts/publish-ota.ps1 -Version <version> -BaseUrl http://<pc-ip>:8787`.
+3. The script copies the binary to `server/ota/ouo_s31_bringup.bin` and updates `server/ota/manifest.json` with `version`, `sha256`, and `size`.
+4. Confirm from the device with `ota_check`.
+5. Apply from the device with `ota_update`; successful updates reboot into the new image.

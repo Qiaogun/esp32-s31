@@ -5,4 +5,5 @@ idf/sdkconfig
 idf/sdkconfig.old
 logs/
 server/*.log
+server/ota/*.bin
 server/target/
