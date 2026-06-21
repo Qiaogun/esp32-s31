@@ -59,3 +59,4 @@ For a dev OTA package:
 5. Apply from the device with `ota_update`; successful updates reboot into the new image.
 
 For full device-to-server smoke after flashing, `scripts/smoke-ai-home-closed-loop.ps1` starts the Rust backend if needed, publishes LAN OTA metadata, validates backend HTTP endpoints, and runs the serial device smoke when Wi-Fi credentials are supplied.
+The smoke scripts can read `OUO_SERIAL_PORT`, `OUO_WIFI_SSID`, and `OUO_WIFI_PASSWORD` from the environment so Wi-Fi credentials do not need to appear in command history.

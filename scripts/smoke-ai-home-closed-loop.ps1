@@ -126,6 +126,16 @@ if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
 }
 $BaseUrl = $BaseUrl.TrimEnd("/")
 
+if ([string]::IsNullOrWhiteSpace($Port)) {
+    $Port = $env:OUO_SERIAL_PORT
+}
+if ([string]::IsNullOrWhiteSpace($Ssid)) {
+    $Ssid = $env:OUO_WIFI_SSID
+}
+if ([string]::IsNullOrWhiteSpace($Password)) {
+    $Password = $env:OUO_WIFI_PASSWORD
+}
+
 if ($BaseUrl -match "://(127\.0\.0\.1|localhost)(:|/|$)") {
     throw "BaseUrl is $BaseUrl, but the ESP needs the PC's LAN IP. Pass -BaseUrl http://<pc-ip>:$ServerPort."
 }
@@ -175,7 +185,7 @@ try {
 
     if (-not $SkipDeviceSmoke) {
         if ([string]::IsNullOrWhiteSpace($Ssid) -or [string]::IsNullOrWhiteSpace($Password)) {
-            throw "Use -Ssid and -Password for the device smoke, or pass -SkipDeviceSmoke for backend/LAN-only validation."
+            throw "Use -Ssid and -Password, set OUO_WIFI_SSID/OUO_WIFI_PASSWORD, or pass -SkipDeviceSmoke for backend/LAN-only validation."
         }
 
         $deviceArgs = @{

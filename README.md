@@ -131,6 +131,15 @@ Full closed-loop smoke after flashing:
 .\scripts\smoke-ai-home-closed-loop.ps1 -Port COM5 -Ssid <ssid> -Password <password>
 ```
 
+To avoid putting Wi-Fi credentials in shell history, set environment variables instead:
+
+```powershell
+$env:OUO_SERIAL_PORT="COM5"
+$env:OUO_WIFI_SSID="<ssid>"
+$env:OUO_WIFI_PASSWORD="<password>"
+.\scripts\smoke-ai-home-closed-loop.ps1
+```
+
 The closed-loop script starts the Rust backend if needed, publishes OTA metadata for the detected LAN URL, runs backend HTTP smoke, and then runs the serial device smoke.
 
 The web console at `http://<pc-ip>:8787/` can send dialog text, view the latest camera frame, inspect device state/events, and queue `set_mood` or `capture_camera:snapshot` commands for the ESP to receive through `ai_home_poll`.

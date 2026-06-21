@@ -117,6 +117,10 @@ function Queue-ServerCommand {
 }
 
 if ([string]::IsNullOrWhiteSpace($Port)) {
+    $Port = $env:OUO_SERIAL_PORT
+}
+
+if ([string]::IsNullOrWhiteSpace($Port)) {
     $Port = Get-S31Port
 }
 
@@ -125,8 +129,14 @@ if ([string]::IsNullOrWhiteSpace($Port)) {
 }
 
 if (-not $SkipWifiConnect) {
+    if ([string]::IsNullOrWhiteSpace($Ssid)) {
+        $Ssid = $env:OUO_WIFI_SSID
+    }
+    if ([string]::IsNullOrWhiteSpace($Password)) {
+        $Password = $env:OUO_WIFI_PASSWORD
+    }
     if ([string]::IsNullOrWhiteSpace($Ssid) -or [string]::IsNullOrWhiteSpace($Password)) {
-        throw "Use -Ssid and -Password, or pass -SkipWifiConnect if the device is already connected."
+        throw "Use -Ssid and -Password, set OUO_WIFI_SSID/OUO_WIFI_PASSWORD, or pass -SkipWifiConnect if the device is already connected."
     }
     if ($Ssid -match "\s" -or $Password -match "\s") {
         throw "Current firmware command parsing does not support spaces in SSID or password."
