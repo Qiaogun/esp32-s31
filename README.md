@@ -29,6 +29,7 @@ Helper scripts from `esp32-s31`:
 .\scripts\smoke-serial-s31.ps1 -Port COM3 -Board korvo-1 -WifiScan
 .\scripts\smoke-serial-s31.ps1 -Port COM3 -Board function-coreboard-1 -WifiScan
 .\scripts\smoke-ai-home-backend.ps1 -BaseUrl http://127.0.0.1:8787
+.\scripts\smoke-ai-home-device.ps1 -Port COM3 -Ssid <ssid> -Password <password> -ServerUrl http://<pc-ip>:8787
 ```
 
 If `-Port` is omitted, `flash-monitor-idf.ps1` tries to pick a USB serial/JTAG-looking COM port.
@@ -103,6 +104,14 @@ Backend smoke test:
 ```powershell
 .\scripts\smoke-ai-home-backend.ps1 -BaseUrl http://127.0.0.1:8787
 ```
+
+Device-to-server smoke test after flashing and starting the backend:
+
+```powershell
+.\scripts\smoke-ai-home-device.ps1 -Port COM3 -Ssid <ssid> -Password <password> -ServerUrl http://<pc-ip>:8787
+```
+
+Use the PC's LAN IP for `-ServerUrl`; the ESP cannot reach the backend through `127.0.0.1`.
 
 The ESP firmware exposes matching serial diagnostics:
 
