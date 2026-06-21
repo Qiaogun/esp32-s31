@@ -28,6 +28,7 @@ Helper scripts from `esp32-s31`:
 .\scripts\smoke-serial-s31.ps1 -Port COM3
 .\scripts\smoke-serial-s31.ps1 -Port COM3 -Board korvo-1 -WifiScan
 .\scripts\smoke-serial-s31.ps1 -Port COM3 -Board function-coreboard-1 -WifiScan
+.\scripts\smoke-ai-home-backend.ps1 -BaseUrl http://127.0.0.1:8787
 ```
 
 If `-Port` is omitted, `flash-monitor-idf.ps1` tries to pick a USB serial/JTAG-looking COM port.
@@ -95,6 +96,12 @@ GET  /api/v1/camera/latest
 GET  /api/v1/ota/manifest
 POST /api/v1/ota/report
 GET  /api/v1/events
+```
+
+Backend smoke test:
+
+```powershell
+.\scripts\smoke-ai-home-backend.ps1 -BaseUrl http://127.0.0.1:8787
 ```
 
 The ESP firmware exposes matching serial diagnostics:
