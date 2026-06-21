@@ -29,6 +29,7 @@ Helper scripts from `esp32-s31`:
 .\scripts\smoke-serial-s31.ps1 -Port COM3 -Board korvo-1 -WifiScan
 .\scripts\smoke-serial-s31.ps1 -Port COM3 -Board function-coreboard-1 -WifiScan
 .\scripts\smoke-ai-home-backend.ps1 -BaseUrl http://127.0.0.1:8787
+.\scripts\prepare-ai-home-lan.ps1
 .\scripts\smoke-ai-home-device.ps1 -Port COM3 -Ssid <ssid> -Password <password> -ServerUrl http://<pc-ip>:8787
 ```
 
@@ -105,13 +106,19 @@ Backend smoke test:
 .\scripts\smoke-ai-home-backend.ps1 -BaseUrl http://127.0.0.1:8787
 ```
 
+LAN backend and OTA manifest preparation before device smoke:
+
+```powershell
+.\scripts\prepare-ai-home-lan.ps1
+```
+
 Device-to-server smoke test after flashing and starting the backend:
 
 ```powershell
 .\scripts\smoke-ai-home-device.ps1 -Port COM3 -Ssid <ssid> -Password <password> -ServerUrl http://<pc-ip>:8787
 ```
 
-Use the PC's LAN IP for `-ServerUrl`; the ESP cannot reach the backend through `127.0.0.1`.
+Use the PC's LAN IP for `-ServerUrl`; the ESP cannot reach the backend through `127.0.0.1`. `prepare-ai-home-lan.ps1` detects that IP, republishes the OTA manifest with the LAN firmware URL, and prints the matching device smoke command.
 
 The ESP firmware exposes matching serial diagnostics:
 
