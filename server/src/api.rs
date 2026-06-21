@@ -15,7 +15,7 @@ use serde_json::json;
 use std::path::Path;
 
 use crate::emotion::map_emotion;
-use crate::state::{AppState, LatestFrame};
+use crate::state::{AppState, LatestFrame, PendingDeviceCommand};
 use crate::types::{
     CameraFrameMeta, CameraFrameRequest, DeviceAction, DeviceCommandRequest, DeviceCommandResponse,
     DialogRequest, DialogResponse, EmotionMapRequest, HealthResponse, HeartbeatRequest,
@@ -133,7 +133,24 @@ async fn wake(
         };
         runtime.clone()
     };
-    state.publish(ServerEvent::Wake(req));
+    let mood_action = DeviceAction {
+        kind: "set_mood".to_string(),
+        value: snapshot.assistant.last_emotion.as_device_mood().to_string(),
+    };
+    let queued = {
+        let mut queue = state.command_queue.write().await;
+        queue.push_back(PendingDeviceCommand {
+            device_id: req.device_id.clone(),
+            action: mood_action,
+        });
+        queue.len()
+    };
+    state.publish(ServerEvent::Wake(req.clone()));
+    state.publish(ServerEvent::Command(DeviceCommandResponse {
+        device_id: req.device_id,
+        actions: Vec::new(),
+        queued,
+    }));
     state.publish(ServerEvent::State(snapshot.clone()));
     Json(snapshot)
 }
@@ -392,7 +409,10 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(heartbeat.device_id, "ouo-s31-test");
         assert!(heartbeat.online);
-        assert_eq!(heartbeat.assistant.last_emotion, crate::types::Emotion::Smile);
+        assert_eq!(
+            heartbeat.assistant.last_emotion,
+            crate::types::Emotion::Smile
+        );
 
         let (status, dialog): (StatusCode, DialogResponse) = post_json(
             app,
@@ -478,6 +498,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn wake_queues_mapped_mood_for_device_poll() {
+        let app = test_app();
+
+        let (status, wake): (StatusCode, DeviceRuntime) = post_json(
+            app.clone(),
+            "/api/v1/wake",
+            json!({
+                "device_id": "device-wake",
+                "phrase": "ouo",
+                "confidence": 0.91
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(wake.device_id, "device-wake");
+        assert_eq!(wake.assistant.last_wake_phrase.as_deref(), Some("ouo"));
+        assert_eq!(wake.assistant.last_emotion, crate::types::Emotion::Blink);
+
+        let (status, polled): (StatusCode, DeviceCommandResponse) = post_json(
+            app,
+            "/api/v1/device/command",
+            json!({ "device_id": "device-wake" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(polled.actions.len(), 1);
+        assert_eq!(polled.actions[0].kind, "set_mood");
+        assert_eq!(polled.actions[0].value, "blink");
+        assert_eq!(polled.queued, 0);
+    }
+
+    #[tokio::test]
     async fn camera_and_ota_endpoints_keep_device_contract() {
         let app = test_app();
 
@@ -494,7 +546,8 @@ mod tests {
             .expect("router response");
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-        let bmp_1x1 = "Qk06AAAAAAAAADYAAAAoAAAAAQAAAP////8BABgAAAAAAAQAAAATCwAAEwsAAAAAAAAAAAAA////AA==";
+        let bmp_1x1 =
+            "Qk06AAAAAAAAADYAAAAoAAAAAQAAAP////8BABgAAAAAAAQAAAATCwAAEwsAAAAAAAAAAAAA////AA==";
         let (status, frame): (StatusCode, CameraFrameMeta) = post_json(
             app.clone(),
             "/api/v1/camera/frame",

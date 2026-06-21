@@ -108,6 +108,13 @@ $wake = Invoke-JsonPost "/api/v1/wake" @{
 Assert-True -Condition ($wake.assistant.last_wake_phrase -eq "ouo") -Message "wake phrase was not recorded"
 Assert-True -Condition ($wake.assistant.last_emotion -eq "blink") -Message "wake did not map high confidence to blink"
 Write-Host "ok wake emotion=$($wake.assistant.last_emotion)"
+$wakeCommand = Invoke-JsonPost "/api/v1/device/command" @{
+    device_id = $DeviceId
+}
+Assert-True -Condition (@($wakeCommand.actions).Count -eq 1) -Message "wake did not queue one device action"
+Assert-True -Condition ($wakeCommand.actions[0].kind -eq "set_mood") -Message "wake action kind mismatch"
+Assert-True -Condition ($wakeCommand.actions[0].value -eq "blink") -Message "wake action value mismatch"
+Write-Host "ok wake action=$($wakeCommand.actions[0].kind):$($wakeCommand.actions[0].value)"
 
 $emotion = Invoke-JsonPost "/api/v1/emotion/map" @{
     text = "你好，我今天很开心"
