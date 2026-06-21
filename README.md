@@ -48,6 +48,10 @@ mac
 partitions
 storage_test
 wifi_scan
+wifi_status
+wifi_connect <ssid> <password>
+wifi_autoconnect on|off
+wifi_forget
 board_info
 korvo_led_test [gpio]
 function_led_test
@@ -136,6 +140,8 @@ ota_check
 ota_update
 ota_manifest_url <url>
 ```
+
+`wifi_connect` stores successful Wi-Fi credentials in NVS and enables `wifi_autoconnect`, so the device can reconnect after reboot. Use `wifi_autoconnect on|off` to control boot reconnection and `wifi_forget` to clear stored credentials.
 
 `ai_home_server` and `ai_home_autostart` are persisted in NVS. After Wi-Fi is connected, `ai_home_ping` posts a heartbeat to the Rust backend, and `ai_home_dialog <text>` posts text to `/api/v1/dialog`, applies the returned `device_mood`, and prints the assistant text. The device currently has no speaker dependency. Assistant audio is handled on the server console with browser speech synthesis, while the device receives mood/actions.
 

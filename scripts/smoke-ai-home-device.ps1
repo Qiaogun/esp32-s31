@@ -153,6 +153,7 @@ try {
     }
 
     $output += Send-DeviceCommand -Serial $serial -Command "wifi_status" -Label "wifi_status" -WaitMs 2000
+    $output += Send-DeviceCommand -Serial $serial -Command "wifi_autoconnect on" -Label "wifi_autoconnect on" -WaitMs 1000
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_server $ServerUrl" -Label "ai_home_server $ServerUrl" -WaitMs 1000
     $output += Send-DeviceCommand -Serial $serial -Command ("ota_manifest_url {0}" -f (Join-Url $ServerUrl "/api/v1/ota/manifest")) -Label "ota_manifest_url <server>/api/v1/ota/manifest" -WaitMs 1000
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_ping" -Label "ai_home_ping" -WaitMs 7000
@@ -174,6 +175,7 @@ try {
     Write-Host ("Saved AI Home device smoke log: {0}" -f $LogPath)
 
     Assert-Contains -Text $output -Needle "wifi=connected" -Message "Device did not report Wi-Fi connected"
+    Assert-Contains -Text $output -Needle "ok wifi_autoconnect=1" -Message "Device did not persist Wi-Fi autoconnect"
     Assert-Contains -Text $output -Needle "ok ai_home_server=" -Message "Device did not persist ai_home_server"
     Assert-Contains -Text $output -Needle "ai_home_ping ok http=200" -Message "Device heartbeat did not reach backend"
     Assert-Contains -Text $output -Needle "wake ok phrase=" -Message "Wake diagnostic did not run"

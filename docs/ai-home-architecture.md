@@ -8,7 +8,7 @@ This project is split into three low-coupling parts:
 
 ## Runtime Flow
 
-1. Device connects to Wi-Fi with `wifi_connect <ssid> <password>`.
+1. Device connects to Wi-Fi with `wifi_connect <ssid> <password>`; successful credentials are stored in NVS and can reconnect on boot through `wifi_autoconnect`.
 2. `ai_home_server <url>` stores the Rust backend URL in NVS.
 3. `ai_home_ping` reports device health to `POST /api/v1/device/heartbeat`.
 4. Wake events go to `POST /api/v1/wake`; manual wake diagnostics remain available with `wake <phrase> [confidence]`.

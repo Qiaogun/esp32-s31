@@ -152,10 +152,13 @@ static volatile uint32_t s_camera_preview_new_trans = 0;
 static volatile uint32_t s_camera_preview_finished_trans = 0;
 static char s_ai_server_url[128] = "http://127.0.0.1:8787";
 static char s_ota_manifest_url[160] = "http://127.0.0.1:8787/api/v1/ota/manifest";
+static char s_wifi_ssid[33] = "";
+static char s_wifi_password[65] = "";
 static char s_last_ota_version[32] = "";
 static char s_last_ota_status[32] = "idle";
 static char s_last_wake_phrase[64] = "";
 static uint8_t s_last_wake_confidence = 0;
+static bool s_wifi_autoconnect = true;
 static bool s_ai_home_autostart = false;
 static TaskHandle_t s_ai_home_task_handle = NULL;
 static esp_err_t ensure_korvo_lcd_ready(void);
@@ -284,6 +287,88 @@ static void load_ai_home_config(void) {
     nvs_close(nvs);
 }
 
+static void save_wifi_config(void) {
+    nvs_handle_t nvs = 0;
+    esp_err_t err = nvs_open("ouo", NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "nvs_open wifi failed: %s", esp_err_to_name(err));
+        return;
+    }
+    err = nvs_set_u8(nvs, "wifi_auto", s_wifi_autoconnect ? 1 : 0);
+    if (err == ESP_OK) {
+        err = nvs_set_str(nvs, "wifi_ssid", s_wifi_ssid);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_str(nvs, "wifi_pass", s_wifi_password);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "nvs wifi commit failed: %s", esp_err_to_name(err));
+    }
+    nvs_close(nvs);
+}
+
+static void load_wifi_config(void) {
+    nvs_handle_t nvs = 0;
+    esp_err_t err = nvs_open("ouo", NVS_READONLY, &nvs);
+    if (err != ESP_OK) {
+        return;
+    }
+
+    uint8_t autoconnect = 1;
+    err = nvs_get_u8(nvs, "wifi_auto", &autoconnect);
+    if (err == ESP_OK) {
+        s_wifi_autoconnect = autoconnect != 0;
+    } else if (err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "nvs_get_u8 wifi_auto failed: %s", esp_err_to_name(err));
+    }
+
+    size_t len = sizeof(s_wifi_ssid);
+    err = nvs_get_str(nvs, "wifi_ssid", s_wifi_ssid, &len);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "nvs_get_str wifi_ssid failed: %s", esp_err_to_name(err));
+    }
+
+    len = sizeof(s_wifi_password);
+    err = nvs_get_str(nvs, "wifi_pass", s_wifi_password, &len);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "nvs_get_str wifi_pass failed: %s", esp_err_to_name(err));
+    }
+
+    nvs_close(nvs);
+}
+
+static void clear_wifi_config(void) {
+    s_wifi_ssid[0] = '\0';
+    s_wifi_password[0] = '\0';
+    s_wifi_autoconnect = false;
+
+    nvs_handle_t nvs = 0;
+    esp_err_t err = nvs_open("ouo", NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "nvs_open wifi clear failed: %s", esp_err_to_name(err));
+        return;
+    }
+    esp_err_t erase_ssid = nvs_erase_key(nvs, "wifi_ssid");
+    esp_err_t erase_pass = nvs_erase_key(nvs, "wifi_pass");
+    err = nvs_set_u8(nvs, "wifi_auto", 0);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    if (err != ESP_OK ||
+        (erase_ssid != ESP_OK && erase_ssid != ESP_ERR_NVS_NOT_FOUND) ||
+        (erase_pass != ESP_OK && erase_pass != ESP_ERR_NVS_NOT_FOUND)) {
+        ESP_LOGW(TAG,
+                 "nvs wifi clear partial err=%s ssid=%s pass=%s",
+                 esp_err_to_name(err),
+                 esp_err_to_name(erase_ssid),
+                 esp_err_to_name(erase_pass));
+    }
+    nvs_close(nvs);
+}
+
 static void print_help(void) {
     printf("commands:\n");
     printf("  help\n");
@@ -294,6 +379,8 @@ static void print_help(void) {
     printf("  wifi_scan\n");
     printf("  wifi_status\n");
     printf("  wifi_connect <ssid> <password>\n");
+    printf("  wifi_autoconnect on|off\n");
+    printf("  wifi_forget\n");
     printf("  ai_home_status\n");
     printf("  ai_home_server <url>\n");
     printf("  ai_home_ping\n");
@@ -1077,6 +1164,9 @@ static void print_status(void) {
     printf("ai_home autostart=%d heartbeat_interval_ms=%d\n",
            s_ai_home_autostart,
            OUO_AI_HEARTBEAT_INTERVAL_MS);
+    printf("wifi saved_ssid=\"%s\" autoconnect=%d\n",
+           s_wifi_ssid[0] != '\0' ? s_wifi_ssid : "",
+           s_wifi_autoconnect);
     print_touch_status();
     if (s_state.renderer_ready) {
         printf("renderer_frames=%" PRIu32 " renderer_last_ms=%" PRIu32 " renderer_mood=%s idle=%.1f pressure=%.1f mouth=%d\n",
@@ -1186,21 +1276,46 @@ static void wifi_status_command(void) {
     if (ap_err == ESP_OK) {
         esp_netif_ip_info_t ip = {};
         if (s_sta_netif != NULL && esp_netif_get_ip_info(s_sta_netif, &ip) == ESP_OK) {
-            printf("wifi=connected ssid=\"%s\" rssi=%d channel=%u ip=" IPSTR " gw=" IPSTR "\n",
+            printf("wifi=connected ssid=\"%s\" rssi=%d channel=%u ip=" IPSTR " gw=" IPSTR " autoconnect=%d\n",
                    (const char*)ap.ssid,
                    ap.rssi,
                    ap.primary,
                    IP2STR(&ip.ip),
-                   IP2STR(&ip.gw));
+                   IP2STR(&ip.gw),
+                   s_wifi_autoconnect);
         } else {
-            printf("wifi=connected ssid=\"%s\" rssi=%d channel=%u ip=unknown\n",
+            printf("wifi=connected ssid=\"%s\" rssi=%d channel=%u ip=unknown autoconnect=%d\n",
                    (const char*)ap.ssid,
                    ap.rssi,
-                   ap.primary);
+                   ap.primary,
+                   s_wifi_autoconnect);
         }
         return;
     }
-    printf("wifi=disconnected status=%s\n", esp_err_to_name(ap_err));
+    printf("wifi=disconnected status=%s saved_ssid=\"%s\" autoconnect=%d\n",
+           esp_err_to_name(ap_err),
+           s_wifi_ssid[0] != '\0' ? s_wifi_ssid : "",
+           s_wifi_autoconnect);
+}
+
+static esp_err_t wifi_start_sta_connect(const char* ssid, const char* pass) {
+    esp_err_t err = ensure_wifi_ready();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    wifi_config_t config = {};
+    strcpy((char*)config.sta.ssid, ssid);
+    strcpy((char*)config.sta.password, pass);
+    config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+
+    esp_wifi_disconnect();
+    err = esp_wifi_set_config(WIFI_IF_STA, &config);
+    if (err == ESP_OK) {
+        err = esp_wifi_connect();
+    }
+    return err;
 }
 
 static void wifi_connect_command(const char* args) {
@@ -1223,23 +1338,7 @@ static void wifi_connect_command(const char* args) {
         return;
     }
 
-    esp_err_t err = ensure_wifi_ready();
-    if (err != ESP_OK) {
-        printf("wifi_connect init_err=%s\n", esp_err_to_name(err));
-        return;
-    }
-
-    wifi_config_t config = {};
-    strcpy((char*)config.sta.ssid, work);
-    strcpy((char*)config.sta.password, pass);
-    config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
-    config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
-
-    esp_wifi_disconnect();
-    err = esp_wifi_set_config(WIFI_IF_STA, &config);
-    if (err == ESP_OK) {
-        err = esp_wifi_connect();
-    }
+    esp_err_t err = wifi_start_sta_connect(work, pass);
     if (err != ESP_OK) {
         printf("wifi_connect err=%s\n", esp_err_to_name(err));
         return;
@@ -1250,11 +1349,47 @@ static void wifi_connect_command(const char* args) {
         vTaskDelay(pdMS_TO_TICKS(200));
         wifi_ap_record_t ap = {};
         if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+            memcpy(s_wifi_ssid, work, strlen(work) + 1);
+            memcpy(s_wifi_password, pass, strlen(pass) + 1);
+            s_wifi_autoconnect = true;
+            save_wifi_config();
             wifi_status_command();
             return;
         }
     }
     printf("wifi_connect timeout\n");
+}
+
+static void wifi_autoconnect_command(const char* args) {
+    bool enabled = false;
+    if (!parse_on_off(args, &enabled)) {
+        printf("err use: wifi_autoconnect on|off\n");
+        return;
+    }
+    s_wifi_autoconnect = enabled;
+    save_wifi_config();
+    printf("ok wifi_autoconnect=%d saved_ssid=\"%s\"\n",
+           enabled,
+           s_wifi_ssid[0] != '\0' ? s_wifi_ssid : "");
+}
+
+static void wifi_forget_command(void) {
+    esp_wifi_disconnect();
+    clear_wifi_config();
+    printf("ok wifi_forget\n");
+}
+
+static void wifi_autoconnect_start(void) {
+    if (!s_wifi_autoconnect || s_wifi_ssid[0] == '\0') {
+        ESP_LOGI(TAG, "wifi autoconnect skipped enabled=%d saved=%d", s_wifi_autoconnect, s_wifi_ssid[0] != '\0');
+        return;
+    }
+    esp_err_t err = wifi_start_sta_connect(s_wifi_ssid, s_wifi_password);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "wifi autoconnect started ssid=\"%s\"", s_wifi_ssid);
+    } else {
+        ESP_LOGW(TAG, "wifi autoconnect failed err=%s ssid=\"%s\"", esp_err_to_name(err), s_wifi_ssid);
+    }
 }
 
 static bool wifi_is_connected(void) {
@@ -2560,6 +2695,14 @@ static void process_command(char* line) {
         wifi_status_command();
         return;
     }
+    if (strncmp(line, "wifi_autoconnect ", 17) == 0) {
+        wifi_autoconnect_command(line + 17);
+        return;
+    }
+    if (strcmp(line, "wifi_forget") == 0) {
+        wifi_forget_command();
+        return;
+    }
     if (strncmp(line, "wifi_connect ", 13) == 0) {
         wifi_connect_command(original + 13);
         return;
@@ -2817,8 +2960,10 @@ void app_main(void) {
     s_state.boot_ms = (uint32_t)(esp_timer_get_time() / 1000);
     load_boot_count();
     load_ai_home_config();
+    load_wifi_config();
+    wifi_autoconnect_start();
     ESP_LOGI(TAG, "OuO ESP32-S31 bring-up started");
-    ESP_LOGI(TAG, "serial commands: help, status, diag, mac, partitions, ota_status, ota_check, ota_update, ai_home_status, ai_home_server <url>, ai_home_ping, ai_home_dialog <text>, ai_home_camera_snapshot, ai_home_autostart on|off, wake <phrase> [confidence], emotion_map <text>, board_info, storage_test, wifi_scan, wifi_status, wifi_connect <ssid> <password>, camera_probe, camera_preview [seconds], camera_focus, lcd_probe, lcd_test, renderer_test, touch_status, korvo_led_test [gpio], function_led_test, mood <name>, blush on|off, option <key> on|off, reboot");
+    ESP_LOGI(TAG, "serial commands: help, status, diag, mac, partitions, ota_status, ota_check, ota_update, ai_home_status, ai_home_server <url>, ai_home_ping, ai_home_dialog <text>, ai_home_camera_snapshot, ai_home_autostart on|off, wake <phrase> [confidence], emotion_map <text>, board_info, storage_test, wifi_scan, wifi_status, wifi_connect <ssid> <password>, wifi_autoconnect on|off, wifi_forget, camera_probe, camera_preview [seconds], camera_focus, lcd_probe, lcd_test, renderer_test, touch_status, korvo_led_test [gpio], function_led_test, mood <name>, blush on|off, option <key> on|off, reboot");
     renderer_test_command();
     print_status();
 
