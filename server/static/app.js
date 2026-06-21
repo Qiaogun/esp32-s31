@@ -10,6 +10,9 @@ const commandForm = document.querySelector("#command-form");
 const commandMood = document.querySelector("#command-mood");
 const commandStatus = document.querySelector("#command-status");
 const captureCommand = document.querySelector("#capture-command");
+const wakeForm = document.querySelector("#wake-form");
+const wakePhrase = document.querySelector("#wake-phrase");
+const wakeConfidence = document.querySelector("#wake-confidence");
 const speakToggle = document.querySelector("#speak-toggle");
 const refreshCamera = document.querySelector("#refresh-camera");
 
@@ -143,6 +146,29 @@ captureCommand.addEventListener("click", async () => {
     return;
   }
   commandStatus.textContent = `queued capture_camera:snapshot · remaining ${data.queued}`;
+});
+
+wakeForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const phrase = wakePhrase.value.trim() || "ouo";
+  const confidence = Number.parseFloat(wakeConfidence.value);
+  commandStatus.textContent = "posting wake...";
+  const res = await fetch("/api/v1/wake", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      device_id: "ouo-s31-korvo-1",
+      phrase,
+      confidence: Number.isFinite(confidence) ? confidence : 0.91,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    commandStatus.textContent = data.error || "wake failed";
+    return;
+  }
+  commandStatus.textContent = `wake ${data.assistant.last_wake_phrase} · mood ${data.assistant.last_emotion} · queued for poll`;
+  await loadState();
 });
 
 speakToggle.addEventListener("click", () => {

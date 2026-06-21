@@ -15,6 +15,7 @@ body {
 }
 
 button,
+input,
 select,
 textarea {
   font: inherit;
@@ -123,6 +124,16 @@ select {
   padding: 0 10px;
 }
 
+input {
+  width: 100%;
+  min-height: 38px;
+  border-radius: 6px;
+  border: 1px solid #3c403d;
+  background: #0e100f;
+  color: #f3f0ea;
+  padding: 0 10px;
+}
+
 button {
   min-height: 38px;
   border: 1px solid #5a625b;
@@ -142,6 +153,16 @@ button.secondary {
 
 form button {
   width: 100%;
+  margin-top: 10px;
+}
+
+.subform {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #303430;
+}
+
+.subform label:not(:first-child) {
   margin-top: 10px;
 }
 

@@ -57,6 +57,16 @@ Assert-True -Condition ($health.ok -eq $true) -Message "health.ok was not true"
 Assert-True -Condition ($health.service -eq "ouo-ai-home-server") -Message "unexpected health.service: $($health.service)"
 Write-Host "ok health service=$($health.service) version=$($health.version)"
 
+$index = Invoke-WebRequest -Method Get -Uri (Join-Url $BaseUrl "/") -TimeoutSec $TimeoutSec
+Assert-True -Condition ($index.StatusCode -eq 200) -Message "web console index did not return HTTP 200"
+Assert-True -Condition ($index.Content -match "OuO AI Home") -Message "web console index did not contain title"
+$appJs = Invoke-WebRequest -Method Get -Uri (Join-Url $BaseUrl "/app.js") -TimeoutSec $TimeoutSec
+Assert-True -Condition ($appJs.StatusCode -eq 200) -Message "web console app.js did not return HTTP 200"
+Assert-True -Condition ($appJs.Content -match "wake-form") -Message "web console app.js did not include wake control"
+$styles = Invoke-WebRequest -Method Get -Uri (Join-Url $BaseUrl "/styles.css") -TimeoutSec $TimeoutSec
+Assert-True -Condition ($styles.StatusCode -eq 200) -Message "web console styles.css did not return HTTP 200"
+Write-Host "ok web console static index/app/styles"
+
 $heartbeat = Invoke-JsonPost "/api/v1/device/heartbeat" @{
     device_id = $DeviceId
     firmware_version = $FirmwareVersion

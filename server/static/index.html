@@ -54,6 +54,13 @@
             <button type="submit">Queue set_mood</button>
           </form>
           <button id="capture-command" class="secondary" type="button">Queue camera snapshot</button>
+          <form id="wake-form" class="subform">
+            <label for="wake-phrase">Wake phrase</label>
+            <input id="wake-phrase" type="text" value="ouo" />
+            <label for="wake-confidence">Wake confidence</label>
+            <input id="wake-confidence" type="number" min="0" max="1" step="0.01" value="0.91" />
+            <button type="submit">Post wake</button>
+          </form>
           <p id="command-status">Waiting for command</p>
         </article>
 
