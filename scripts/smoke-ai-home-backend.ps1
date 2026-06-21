@@ -60,9 +60,11 @@ Write-Host "ok health service=$($health.service) version=$($health.version)"
 $index = Invoke-WebRequest -Method Get -Uri (Join-Url $BaseUrl "/") -TimeoutSec $TimeoutSec
 Assert-True -Condition ($index.StatusCode -eq 200) -Message "web console index did not return HTTP 200"
 Assert-True -Condition ($index.Content -match "OuO AI Home") -Message "web console index did not contain title"
+Assert-True -Condition ($index.Content -match "device-id") -Message "web console index did not include configurable device id"
 $appJs = Invoke-WebRequest -Method Get -Uri (Join-Url $BaseUrl "/app.js") -TimeoutSec $TimeoutSec
 Assert-True -Condition ($appJs.StatusCode -eq 200) -Message "web console app.js did not return HTTP 200"
 Assert-True -Condition ($appJs.Content -match "wake-form") -Message "web console app.js did not include wake control"
+Assert-True -Condition ($appJs.Content -match "currentDeviceId") -Message "web console app.js did not use configurable device id"
 $styles = Invoke-WebRequest -Method Get -Uri (Join-Url $BaseUrl "/styles.css") -TimeoutSec $TimeoutSec
 Assert-True -Condition ($styles.StatusCode -eq 200) -Message "web console styles.css did not return HTTP 200"
 Write-Host "ok web console static index/app/styles"

@@ -4,6 +4,7 @@ const eventsEl = document.querySelector("#events");
 const cameraEl = document.querySelector("#camera");
 const cameraMetaEl = document.querySelector("#camera-meta");
 const replyEl = document.querySelector("#reply");
+const deviceIdInput = document.querySelector("#device-id");
 const dialogForm = document.querySelector("#dialog-form");
 const dialogText = document.querySelector("#dialog-text");
 const commandForm = document.querySelector("#command-form");
@@ -17,9 +18,18 @@ const speakToggle = document.querySelector("#speak-toggle");
 const refreshCamera = document.querySelector("#refresh-camera");
 
 let speechEnabled = true;
+const defaultDeviceId = "ouo-s31-korvo-1";
+const deviceIdStorageKey = "ouo.ai_home.device_id";
 
 function pretty(value) {
   return JSON.stringify(value, null, 2);
+}
+
+function currentDeviceId() {
+  const deviceId = deviceIdInput.value.trim() || defaultDeviceId;
+  deviceIdInput.value = deviceId;
+  localStorage.setItem(deviceIdStorageKey, deviceId);
+  return deviceId;
 }
 
 async function loadState() {
@@ -100,7 +110,7 @@ dialogForm.addEventListener("submit", async (event) => {
   const res = await fetch("/api/v1/dialog", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ device_id: "ouo-s31-korvo-1", text, locale: "zh-CN" }),
+    body: JSON.stringify({ device_id: currentDeviceId(), text, locale: "zh-CN" }),
   });
   const data = await res.json();
   replyEl.textContent = data.text;
@@ -116,7 +126,7 @@ commandForm.addEventListener("submit", async (event) => {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      device_id: "ouo-s31-korvo-1",
+      device_id: currentDeviceId(),
       kind: "set_mood",
       value: mood,
     }),
@@ -135,7 +145,7 @@ captureCommand.addEventListener("click", async () => {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      device_id: "ouo-s31-korvo-1",
+      device_id: currentDeviceId(),
       kind: "capture_camera",
       value: "snapshot",
     }),
@@ -157,7 +167,7 @@ wakeForm.addEventListener("submit", async (event) => {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      device_id: "ouo-s31-korvo-1",
+      device_id: currentDeviceId(),
       phrase,
       confidence: Number.isFinite(confidence) ? confidence : 0.91,
     }),
@@ -177,7 +187,9 @@ speakToggle.addEventListener("click", () => {
 });
 
 refreshCamera.addEventListener("click", loadCamera);
+deviceIdInput.addEventListener("change", currentDeviceId);
 
+deviceIdInput.value = localStorage.getItem(deviceIdStorageKey) || defaultDeviceId;
 loadState();
 loadCamera();
 connectEvents();
