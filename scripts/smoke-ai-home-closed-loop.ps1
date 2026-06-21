@@ -149,7 +149,7 @@ if (-not (Test-BackendHealth -Url $BaseUrl)) {
     $stdout = Join-Path $LogDir "ai-home-server-$stamp.stdout.log"
     $stderr = Join-Path $LogDir "ai-home-server-$stamp.stderr.log"
     $manifestPath = Join-Path $root "server\Cargo.toml"
-    $targetDir = Join-Path $env:TEMP "ouo-server-target-closed-loop"
+    $targetDir = Join-Path $env:TEMP "ouo-server-target-closed-loop-$ServerPort"
     $quotedManifest = ConvertTo-SingleQuotedPowerShell -Value $manifestPath
     $quotedTargetDir = ConvertTo-SingleQuotedPowerShell -Value $targetDir
     $serverAddr = "0.0.0.0:$ServerPort"
