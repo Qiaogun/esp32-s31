@@ -11,17 +11,19 @@ This project is split into three low-coupling parts:
 1. Device connects to Wi-Fi with `wifi_connect <ssid> <password>`; successful credentials are stored in NVS and can reconnect on boot through `wifi_autoconnect`.
 2. `ai_home_server <url>` stores the Rust backend URL in NVS.
 3. `ai_home_ping` reports device health to `POST /api/v1/device/heartbeat`.
-4. Wake events go to `POST /api/v1/wake`; manual wake diagnostics remain available with `wake <phrase> [confidence]`.
-5. `ai_home_dialog <text>` posts dialog text to `POST /api/v1/dialog`; the server calls the local OpenAI-compatible model endpoint configured by `OUO_LLM_BASE_URL`.
-6. The server maps assistant/user context to a device mood and returns a stable `device_mood`; the device applies it to the OuO renderer.
-7. `ai_home_camera_snapshot` captures one OV3660 frame, uploads it to `POST /api/v1/camera/frame`, and the web console renders `GET /api/v1/camera/latest`.
-8. OTA metadata is served by `GET /api/v1/ota/manifest`; the device can verify it with `ota_check` and apply it with `ota_update`.
+4. `ai_home_poll` fetches queued server actions from `POST /api/v1/device/command`; the ESP applies `set_mood` to the OuO renderer.
+5. Wake events go to `POST /api/v1/wake`; manual wake diagnostics remain available with `wake <phrase> [confidence]`.
+6. `ai_home_dialog <text>` posts dialog text to `POST /api/v1/dialog`; the server calls the local OpenAI-compatible model endpoint configured by `OUO_LLM_BASE_URL`.
+7. The server maps assistant/user context to a device mood and returns a stable `device_mood`; the device applies it to the OuO renderer.
+8. `ai_home_camera_snapshot` captures one OV3660 frame, uploads it to `POST /api/v1/camera/frame`, and the web console renders `GET /api/v1/camera/latest`.
+9. OTA metadata is served by `GET /api/v1/ota/manifest`; the device can verify it with `ota_check` and apply it with `ota_update`.
 
 ## Stable API Surface
 
 - `GET /health`
 - `GET /api/v1/state`
 - `POST /api/v1/device/heartbeat`
+- `POST /api/v1/device/command`
 - `POST /api/v1/wake`
 - `POST /api/v1/emotion/map`
 - `POST /api/v1/dialog`

@@ -157,6 +157,15 @@ try {
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_server $ServerUrl" -Label "ai_home_server $ServerUrl" -WaitMs 1000
     $output += Send-DeviceCommand -Serial $serial -Command ("ota_manifest_url {0}" -f (Join-Url $ServerUrl "/api/v1/ota/manifest")) -Label "ota_manifest_url <server>/api/v1/ota/manifest" -WaitMs 1000
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_ping" -Label "ai_home_ping" -WaitMs 7000
+    $queuedCommand = Invoke-RestMethod -Method Post -Uri (Join-Url $ServerUrl "/api/v1/device/command") -ContentType "application/json" -Body (@{
+        device_id = "ouo-s31-korvo-1"
+        kind = "set_mood"
+        value = "sad"
+    } | ConvertTo-Json -Compress) -TimeoutSec $TimeoutSec
+    if ($queuedCommand.queued -lt 1) {
+        throw "Server did not queue device command. Check the log: $LogPath"
+    }
+    $output += Send-DeviceCommand -Serial $serial -Command "ai_home_poll" -Label "ai_home_poll" -WaitMs 7000
     $output += Send-DeviceCommand -Serial $serial -Command "wake ouo 0.91" -Label "wake ouo 0.91" -WaitMs 3000
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_dialog $DialogText" -Label "ai_home_dialog <text>" -WaitMs 15000
 
@@ -178,6 +187,7 @@ try {
     Assert-Contains -Text $output -Needle "ok wifi_autoconnect=1" -Message "Device did not persist Wi-Fi autoconnect"
     Assert-Contains -Text $output -Needle "ok ai_home_server=" -Message "Device did not persist ai_home_server"
     Assert-Contains -Text $output -Needle "ai_home_ping ok http=200" -Message "Device heartbeat did not reach backend"
+    Assert-Contains -Text $output -Needle "ai_home_poll ok http=200 applied=1 mood=sad" -Message "Device did not apply server command"
     Assert-Contains -Text $output -Needle "wake ok phrase=" -Message "Wake diagnostic did not run"
     Assert-Contains -Text $output -Needle "ai_home_dialog ok http=200" -Message "Dialog did not reach backend"
     if (-not $SkipCameraSnapshot) {

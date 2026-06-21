@@ -1,17 +1,19 @@
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use chrono::Utc;
 use tokio::sync::{RwLock, broadcast};
 
 use crate::llm::LlmClient;
 use crate::types::{
-    AssistantRuntime, CameraFrameMeta, DeviceRuntime, Emotion, OtaRuntime, ServerEvent,
+    AssistantRuntime, CameraFrameMeta, DeviceAction, DeviceRuntime, Emotion, OtaRuntime,
+    ServerEvent,
 };
 
 #[derive(Clone)]
 pub struct AppState {
     pub runtime: Arc<RwLock<DeviceRuntime>>,
     pub latest_frame: Arc<RwLock<Option<LatestFrame>>>,
+    pub command_queue: Arc<RwLock<VecDeque<PendingDeviceCommand>>>,
     pub events: broadcast::Sender<ServerEvent>,
     pub llm: LlmClient,
 }
@@ -20,6 +22,12 @@ pub struct AppState {
 pub struct LatestFrame {
     pub meta: CameraFrameMeta,
     pub bytes: Vec<u8>,
+}
+
+#[derive(Clone)]
+pub struct PendingDeviceCommand {
+    pub device_id: String,
+    pub action: DeviceAction,
 }
 
 impl AppState {
@@ -51,6 +59,7 @@ impl AppState {
                 },
             })),
             latest_frame: Arc::new(RwLock::new(None)),
+            command_queue: Arc::new(RwLock::new(VecDeque::new())),
             events,
             llm: LlmClient::from_env(),
         }

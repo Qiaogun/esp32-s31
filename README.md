@@ -94,6 +94,7 @@ Primary API:
 GET  /health
 GET  /api/v1/state
 POST /api/v1/device/heartbeat
+POST /api/v1/device/command
 POST /api/v1/wake
 POST /api/v1/emotion/map
 POST /api/v1/dialog
@@ -138,6 +139,7 @@ The ESP firmware exposes matching serial diagnostics:
 ai_home_status
 ai_home_server <url>
 ai_home_ping
+ai_home_poll
 ai_home_dialog <text>
 ai_home_camera_snapshot
 ai_home_autostart on|off
@@ -151,7 +153,7 @@ ota_manifest_url <url>
 
 `wifi_connect` stores successful Wi-Fi credentials in NVS and enables `wifi_autoconnect`, so the device can reconnect after reboot. Use `wifi_autoconnect on|off` to control boot reconnection and `wifi_forget` to clear stored credentials.
 
-`ai_home_server` and `ai_home_autostart` are persisted in NVS. After Wi-Fi is connected, `ai_home_ping` posts a heartbeat to the Rust backend, and `ai_home_dialog <text>` posts text to `/api/v1/dialog`, applies the returned `device_mood`, and prints the assistant text. The device currently has no speaker dependency. Assistant audio is handled on the server console with browser speech synthesis, while the device receives mood/actions.
+`ai_home_server` and `ai_home_autostart` are persisted in NVS. After Wi-Fi is connected, `ai_home_ping` posts a heartbeat to the Rust backend, `ai_home_poll` fetches queued server actions from `/api/v1/device/command`, and `ai_home_dialog <text>` posts text to `/api/v1/dialog`, applies the returned `device_mood`, and prints the assistant text. The device currently has no speaker dependency. Assistant audio is handled on the server console with browser speech synthesis, while the device receives mood/actions.
 
 `ai_home_camera_snapshot` captures a 240x240 OV3660 RGB565 frame, posts it as a browser-readable BMP to `/api/v1/camera/frame`, and the web console can render it through `/api/v1/camera/latest`.
 

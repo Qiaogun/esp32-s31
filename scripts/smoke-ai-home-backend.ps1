@@ -68,6 +68,24 @@ Assert-True -Condition ($heartbeat.device_id -eq $DeviceId) -Message "heartbeat 
 Assert-True -Condition ($heartbeat.online -eq $true) -Message "heartbeat did not mark device online"
 Write-Host "ok heartbeat online=$($heartbeat.online) mood=$($heartbeat.assistant.last_emotion)"
 
+$queuedCommand = Invoke-JsonPost "/api/v1/device/command" @{
+    device_id = $DeviceId
+    kind = "set_mood"
+    value = "sad"
+}
+Assert-True -Condition ($queuedCommand.queued -ge 1) -Message "device command did not queue"
+$polledCommand = Invoke-JsonPost "/api/v1/device/command" @{
+    device_id = $DeviceId
+}
+Assert-True -Condition (@($polledCommand.actions).Count -eq 1) -Message "device command poll did not return one action"
+Assert-True -Condition ($polledCommand.actions[0].kind -eq "set_mood") -Message "device command kind mismatch"
+Assert-True -Condition ($polledCommand.actions[0].value -eq "sad") -Message "device command value mismatch"
+$emptyCommand = Invoke-JsonPost "/api/v1/device/command" @{
+    device_id = $DeviceId
+}
+Assert-True -Condition (@($emptyCommand.actions).Count -eq 0) -Message "device command queue was not drained"
+Write-Host "ok command action=$($polledCommand.actions[0].kind):$($polledCommand.actions[0].value)"
+
 $wake = Invoke-JsonPost "/api/v1/wake" @{
     device_id = $DeviceId
     phrase = "ouo"

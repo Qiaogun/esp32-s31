@@ -92,6 +92,20 @@ pub struct DeviceAction {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DeviceCommandRequest {
+    pub device_id: String,
+    pub kind: Option<String>,
+    pub value: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DeviceCommandResponse {
+    pub device_id: String,
+    pub actions: Vec<DeviceAction>,
+    pub queued: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DialogResponse {
     pub text: String,
     pub emotion: Emotion,
@@ -182,6 +196,7 @@ pub enum ServerEvent {
     State(DeviceRuntime),
     Wake(WakeRequest),
     Dialog(DialogResponse),
+    Command(DeviceCommandResponse),
     Camera(CameraFrameMeta),
     Ota(OtaRuntime),
 }

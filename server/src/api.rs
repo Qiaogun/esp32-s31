@@ -17,9 +17,9 @@ use std::path::Path;
 use crate::emotion::map_emotion;
 use crate::state::{AppState, LatestFrame};
 use crate::types::{
-    CameraFrameMeta, CameraFrameRequest, DeviceAction, DialogRequest, DialogResponse,
-    EmotionMapRequest, HealthResponse, HeartbeatRequest, OtaManifest, OtaReportRequest, OtaRuntime,
-    ServerAudio, ServerEvent, WakeRequest,
+    CameraFrameMeta, CameraFrameRequest, DeviceAction, DeviceCommandRequest, DeviceCommandResponse,
+    DialogRequest, DialogResponse, EmotionMapRequest, HealthResponse, HeartbeatRequest,
+    OtaManifest, OtaReportRequest, OtaRuntime, ServerAudio, ServerEvent, WakeRequest,
 };
 
 pub fn router(state: AppState) -> Router {
@@ -27,6 +27,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/api/v1/state", get(state_snapshot))
         .route("/api/v1/device/heartbeat", post(heartbeat))
+        .route("/api/v1/device/command", post(device_command))
         .route("/api/v1/wake", post(wake))
         .route("/api/v1/emotion/map", post(emotion_map))
         .route("/api/v1/dialog", post(dialog))
@@ -69,6 +70,49 @@ async fn heartbeat(
     };
     state.publish(ServerEvent::State(snapshot.clone()));
     Json(snapshot)
+}
+
+async fn device_command(
+    State(state): State<AppState>,
+    Json(req): Json<DeviceCommandRequest>,
+) -> Result<Json<DeviceCommandResponse>, (StatusCode, Json<serde_json::Value>)> {
+    if let Some(kind) = req.kind {
+        let value = req.value.unwrap_or_default();
+        if kind.trim().is_empty() || value.trim().is_empty() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "kind and value are required when enqueueing a command" })),
+            ));
+        }
+        let mut queue = state.command_queue.write().await;
+        queue.push_back(crate::state::PendingDeviceCommand {
+            device_id: req.device_id.clone(),
+            action: DeviceAction { kind, value },
+        });
+        let response = DeviceCommandResponse {
+            device_id: req.device_id,
+            actions: Vec::new(),
+            queued: queue.len(),
+        };
+        state.publish(ServerEvent::Command(response.clone()));
+        return Ok(Json(response));
+    }
+
+    let (action, queued) = {
+        let mut queue = state.command_queue.write().await;
+        let index = queue
+            .iter()
+            .position(|cmd| cmd.device_id == req.device_id || cmd.device_id == "*");
+        let action = index.and_then(|idx| queue.remove(idx).map(|cmd| cmd.action));
+        (action, queue.len())
+    };
+    let response = DeviceCommandResponse {
+        device_id: req.device_id,
+        actions: action.into_iter().collect(),
+        queued,
+    };
+    state.publish(ServerEvent::Command(response.clone()));
+    Ok(Json(response))
 }
 
 async fn wake(

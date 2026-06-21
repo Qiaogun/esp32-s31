@@ -384,6 +384,7 @@ static void print_help(void) {
     printf("  ai_home_status\n");
     printf("  ai_home_server <url>\n");
     printf("  ai_home_ping\n");
+    printf("  ai_home_poll\n");
     printf("  ai_home_dialog <text>\n");
     printf("  ai_home_camera_snapshot\n");
     printf("  ai_home_autostart on|off\n");
@@ -458,7 +459,7 @@ static void ai_home_status_command(void) {
     printf("ai_home autostart=%d heartbeat_interval_ms=%d\n",
            s_ai_home_autostart,
            OUO_AI_HEARTBEAT_INTERVAL_MS);
-    printf("ai_home api heartbeat=POST /api/v1/device/heartbeat wake=POST /api/v1/wake dialog=POST /api/v1/dialog camera=POST /api/v1/camera/frame\n");
+    printf("ai_home api heartbeat=POST /api/v1/device/heartbeat command=POST /api/v1/device/command wake=POST /api/v1/wake dialog=POST /api/v1/dialog camera=POST /api/v1/camera/frame\n");
 }
 
 static void ai_home_server_command(const char* args) {
@@ -1790,6 +1791,49 @@ static void ai_home_ping_command(bool verbose) {
     }
 }
 
+static bool ai_home_apply_action_response(const char* response) {
+    char kind[32] = {};
+    char value[32] = {};
+    if (!json_extract_string(response, "kind", kind, sizeof(kind)) ||
+        !json_extract_string(response, "value", value, sizeof(value))) {
+        return false;
+    }
+    if (strcmp(kind, "set_mood") == 0 && valid_mood(value)) {
+        apply_mood_from_ai(value);
+        return true;
+    }
+    ESP_LOGW(TAG, "ai_home ignored action kind=%s value=%s", kind, value);
+    return false;
+}
+
+static void ai_home_poll_command(bool verbose) {
+    char body[96] = {};
+    snprintf(body, sizeof(body), "{\"device_id\":\"ouo-s31-korvo-1\"}");
+
+    char response[OUO_AI_HTTP_RESPONSE_MAX] = {};
+    int status_code = 0;
+    esp_err_t err = ai_home_post_json("/api/v1/device/command", body, response, sizeof(response), &status_code);
+    if (err != ESP_OK || status_code < 200 || status_code >= 300) {
+        if (verbose) {
+            printf("ai_home_poll err=%s http=%d response=\"%s\"\n", esp_err_to_name(err), status_code, response);
+        } else {
+            ESP_LOGW(TAG, "ai_home command poll failed err=%s http=%d", esp_err_to_name(err), status_code);
+        }
+        return;
+    }
+
+    bool applied = ai_home_apply_action_response(response);
+    if (verbose) {
+        printf("ai_home_poll ok http=%d applied=%d mood=%s response=\"%s\"\n",
+               status_code,
+               applied,
+               s_state.mood,
+               response);
+    } else if (applied) {
+        ESP_LOGI(TAG, "ai_home command applied mood=%s", s_state.mood);
+    }
+}
+
 static void ai_home_dialog_command(const char* args) {
     char text[192] = {};
     snprintf(text, sizeof(text), "%s", args == NULL ? "" : args);
@@ -1832,6 +1876,7 @@ static void ai_home_task(void* arg) {
     while (true) {
         if (s_ai_home_autostart && s_wifi_ready && wifi_is_connected()) {
             ai_home_ping_command(false);
+            ai_home_poll_command(false);
         }
         vTaskDelay(pdMS_TO_TICKS(OUO_AI_HEARTBEAT_INTERVAL_MS));
     }
@@ -2625,6 +2670,10 @@ static void process_command(char* line) {
         ai_home_ping_command(true);
         return;
     }
+    if (strcmp(line, "ai_home_poll") == 0) {
+        ai_home_poll_command(true);
+        return;
+    }
     if (strncmp(line, "ai_home_dialog ", 15) == 0) {
         ai_home_dialog_command(original + 15);
         return;
@@ -2963,7 +3012,7 @@ void app_main(void) {
     load_wifi_config();
     wifi_autoconnect_start();
     ESP_LOGI(TAG, "OuO ESP32-S31 bring-up started");
-    ESP_LOGI(TAG, "serial commands: help, status, diag, mac, partitions, ota_status, ota_check, ota_update, ai_home_status, ai_home_server <url>, ai_home_ping, ai_home_dialog <text>, ai_home_camera_snapshot, ai_home_autostart on|off, wake <phrase> [confidence], emotion_map <text>, board_info, storage_test, wifi_scan, wifi_status, wifi_connect <ssid> <password>, wifi_autoconnect on|off, wifi_forget, camera_probe, camera_preview [seconds], camera_focus, lcd_probe, lcd_test, renderer_test, touch_status, korvo_led_test [gpio], function_led_test, mood <name>, blush on|off, option <key> on|off, reboot");
+    ESP_LOGI(TAG, "serial commands: help, status, diag, mac, partitions, ota_status, ota_check, ota_update, ai_home_status, ai_home_server <url>, ai_home_ping, ai_home_poll, ai_home_dialog <text>, ai_home_camera_snapshot, ai_home_autostart on|off, wake <phrase> [confidence], emotion_map <text>, board_info, storage_test, wifi_scan, wifi_status, wifi_connect <ssid> <password>, wifi_autoconnect on|off, wifi_forget, camera_probe, camera_preview [seconds], camera_focus, lcd_probe, lcd_test, renderer_test, touch_status, korvo_led_test [gpio], function_led_test, mood <name>, blush on|off, option <key> on|off, reboot");
     renderer_test_command();
     print_status();
 
