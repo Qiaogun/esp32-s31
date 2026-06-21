@@ -65,6 +65,7 @@ $appJs = Invoke-WebRequest -Method Get -Uri (Join-Url $BaseUrl "/app.js") -Timeo
 Assert-True -Condition ($appJs.StatusCode -eq 200) -Message "web console app.js did not return HTTP 200"
 Assert-True -Condition ($appJs.Content -match "wake-form") -Message "web console app.js did not include wake control"
 Assert-True -Condition ($appJs.Content -match "currentDeviceId") -Message "web console app.js did not use configurable device id"
+Assert-True -Condition ($appJs.Content -match "ota_check") -Message "web console app.js did not include OTA check command"
 $styles = Invoke-WebRequest -Method Get -Uri (Join-Url $BaseUrl "/styles.css") -TimeoutSec $TimeoutSec
 Assert-True -Condition ($styles.StatusCode -eq 200) -Message "web console styles.css did not return HTTP 200"
 Write-Host "ok web console static index/app/styles"
@@ -111,6 +112,20 @@ Assert-True -Condition (@($polledCameraCommand.actions).Count -eq 1) -Message "c
 Assert-True -Condition ($polledCameraCommand.actions[0].kind -eq "capture_camera") -Message "camera command kind mismatch"
 Assert-True -Condition ($polledCameraCommand.actions[0].value -eq "snapshot") -Message "camera command value mismatch"
 Write-Host "ok command action=$($polledCameraCommand.actions[0].kind):$($polledCameraCommand.actions[0].value)"
+
+$queuedOtaCheckCommand = Invoke-JsonPost "/api/v1/device/command" @{
+    device_id = $DeviceId
+    kind = "ota_check"
+    value = "manifest"
+}
+Assert-True -Condition ($queuedOtaCheckCommand.queued -ge 1) -Message "ota_check command did not queue"
+$polledOtaCheckCommand = Invoke-JsonPost "/api/v1/device/command" @{
+    device_id = $DeviceId
+}
+Assert-True -Condition (@($polledOtaCheckCommand.actions).Count -eq 1) -Message "ota_check command poll did not return one action"
+Assert-True -Condition ($polledOtaCheckCommand.actions[0].kind -eq "ota_check") -Message "ota_check command kind mismatch"
+Assert-True -Condition ($polledOtaCheckCommand.actions[0].value -eq "manifest") -Message "ota_check command value mismatch"
+Write-Host "ok command action=$($polledOtaCheckCommand.actions[0].kind):$($polledOtaCheckCommand.actions[0].value)"
 
 $wake = Invoke-JsonPost "/api/v1/wake" @{
     device_id = $DeviceId

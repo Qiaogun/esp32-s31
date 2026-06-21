@@ -11,6 +11,7 @@ const commandForm = document.querySelector("#command-form");
 const commandMood = document.querySelector("#command-mood");
 const commandStatus = document.querySelector("#command-status");
 const captureCommand = document.querySelector("#capture-command");
+const otaCheckCommand = document.querySelector("#ota-check-command");
 const wakeForm = document.querySelector("#wake-form");
 const wakePhrase = document.querySelector("#wake-phrase");
 const wakeConfidence = document.querySelector("#wake-confidence");
@@ -156,6 +157,25 @@ captureCommand.addEventListener("click", async () => {
     return;
   }
   commandStatus.textContent = `queued capture_camera:snapshot · remaining ${data.queued}`;
+});
+
+otaCheckCommand.addEventListener("click", async () => {
+  commandStatus.textContent = "queueing ota check...";
+  const res = await fetch("/api/v1/device/command", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      device_id: currentDeviceId(),
+      kind: "ota_check",
+      value: "manifest",
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    commandStatus.textContent = data.error || "ota check command failed";
+    return;
+  }
+  commandStatus.textContent = `queued ota_check:manifest · remaining ${data.queued}`;
 });
 
 wakeForm.addEventListener("submit", async (event) => {

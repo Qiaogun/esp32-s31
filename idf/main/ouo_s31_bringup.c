@@ -1970,6 +1970,14 @@ static bool ai_home_apply_action_response(const char* response) {
         ai_home_camera_snapshot_command();
         return true;
     }
+    if (strcmp(kind, "ota_check") == 0 && strcmp(value, "manifest") == 0) {
+        ota_check_command();
+        return true;
+    }
+    if (strcmp(kind, "ota_update") == 0 && strcmp(value, "apply") == 0) {
+        ota_update_command();
+        return true;
+    }
     ESP_LOGW(TAG, "ai_home ignored action kind=%s value=%s", kind, value);
     return false;
 }

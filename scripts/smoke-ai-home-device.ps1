@@ -224,7 +224,8 @@ try {
     }
 
     if (-not $SkipOtaCheck) {
-        $output += Send-DeviceCommand -Serial $serial -Command "ota_check" -Label "ota_check" -WaitMs 10000
+        $output += Queue-ServerCommand -ServerUrl $ServerUrl -Kind "ota_check" -Value "manifest" -TimeoutSec $TimeoutSec
+        $output += Send-DeviceCommand -Serial $serial -Command "ai_home_poll" -Label "ai_home_poll ota_check" -WaitMs 15000
     }
 
     $output += Send-DeviceCommand -Serial $serial -Command "status" -Label "status" -WaitMs 2000
@@ -247,6 +248,8 @@ try {
     }
     Assert-Contains -Text $output -Needle "mood=" -Message "Status did not include mood"
     if (-not $SkipOtaCheck) {
+        Assert-Contains -Text $output -Needle "queue_server_command ota_check:manifest" -Message "Server did not queue OTA check command"
+        Assert-Contains -Text $output -Needle "ai_home_poll ok http=200 applied=1" -Message "Device did not apply queued OTA check command"
         Assert-Contains -Text $output -Needle "ota_check ok http=200" -Message "OTA manifest check did not reach backend"
     }
 } finally {
