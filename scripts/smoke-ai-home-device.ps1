@@ -97,6 +97,25 @@ function Send-DeviceCommand {
     return $text
 }
 
+function Queue-ServerCommand {
+    param(
+        [string]$ServerUrl,
+        [string]$Kind,
+        [string]$Value,
+        [int]$TimeoutSec
+    )
+
+    $queued = Invoke-RestMethod -Method Post -Uri (Join-Url $ServerUrl "/api/v1/device/command") -ContentType "application/json" -Body (@{
+        device_id = "ouo-s31-korvo-1"
+        kind = $Kind
+        value = $Value
+    } | ConvertTo-Json -Compress) -TimeoutSec $TimeoutSec
+    if ($queued.queued -lt 1) {
+        throw "Server did not queue device command $Kind`:$Value. Check the log: $LogPath"
+    }
+    return "`r`n>>> queue_server_command $Kind`:$Value`r`nqueued=$($queued.queued)`r`n"
+}
+
 if ([string]::IsNullOrWhiteSpace($Port)) {
     $Port = Get-S31Port
 }
@@ -157,20 +176,15 @@ try {
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_server $ServerUrl" -Label "ai_home_server $ServerUrl" -WaitMs 1000
     $output += Send-DeviceCommand -Serial $serial -Command ("ota_manifest_url {0}" -f (Join-Url $ServerUrl "/api/v1/ota/manifest")) -Label "ota_manifest_url <server>/api/v1/ota/manifest" -WaitMs 1000
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_ping" -Label "ai_home_ping" -WaitMs 7000
-    $queuedCommand = Invoke-RestMethod -Method Post -Uri (Join-Url $ServerUrl "/api/v1/device/command") -ContentType "application/json" -Body (@{
-        device_id = "ouo-s31-korvo-1"
-        kind = "set_mood"
-        value = "sad"
-    } | ConvertTo-Json -Compress) -TimeoutSec $TimeoutSec
-    if ($queuedCommand.queued -lt 1) {
-        throw "Server did not queue device command. Check the log: $LogPath"
-    }
+    $output += Queue-ServerCommand -ServerUrl $ServerUrl -Kind "set_mood" -Value "sad" -TimeoutSec $TimeoutSec
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_poll" -Label "ai_home_poll" -WaitMs 7000
     $output += Send-DeviceCommand -Serial $serial -Command "wake ouo 0.91" -Label "wake ouo 0.91" -WaitMs 3000
     $output += Send-DeviceCommand -Serial $serial -Command "ai_home_dialog $DialogText" -Label "ai_home_dialog <text>" -WaitMs 15000
 
     if (-not $SkipCameraSnapshot) {
         $output += Send-DeviceCommand -Serial $serial -Command "ai_home_camera_snapshot" -Label "ai_home_camera_snapshot" -WaitMs 30000
+        $output += Queue-ServerCommand -ServerUrl $ServerUrl -Kind "capture_camera" -Value "snapshot" -TimeoutSec $TimeoutSec
+        $output += Send-DeviceCommand -Serial $serial -Command "ai_home_poll" -Label "ai_home_poll capture_camera" -WaitMs 40000
     }
 
     if (-not $SkipOtaCheck) {
@@ -191,6 +205,7 @@ try {
     Assert-Contains -Text $output -Needle "wake ok phrase=" -Message "Wake diagnostic did not run"
     Assert-Contains -Text $output -Needle "ai_home_dialog ok http=200" -Message "Dialog did not reach backend"
     if (-not $SkipCameraSnapshot) {
+        Assert-Contains -Text $output -Needle "queue_server_command capture_camera:snapshot" -Message "Server did not queue camera capture command"
         Assert-Contains -Text $output -Needle "ai_home_camera_snapshot ok http=200" -Message "Camera snapshot did not reach backend"
     }
     Assert-Contains -Text $output -Needle "mood=" -Message "Status did not include mood"

@@ -59,6 +59,22 @@ function Test-BackendHealth {
     }
 }
 
+function Test-BackendCommandApi {
+    param([string]$Url)
+
+    try {
+        $command = Invoke-RestMethod `
+            -Method Post `
+            -Uri (Join-Url $Url "/api/v1/device/command") `
+            -ContentType "application/json" `
+            -Body (@{ device_id = "ouo-closed-loop-probe" } | ConvertTo-Json -Compress) `
+            -TimeoutSec 2
+        return ($null -ne $command.actions)
+    } catch {
+        return $false
+    }
+}
+
 function Wait-BackendHealth {
     param(
         [string]$Url,
@@ -73,6 +89,23 @@ function Wait-BackendHealth {
         Start-Sleep -Milliseconds 500
     }
     throw "Backend did not become healthy at $Url within $TimeoutSec seconds."
+}
+
+function Wait-BackendReady {
+    param(
+        [string]$Url,
+        [int]$TimeoutSec
+    )
+
+    Wait-BackendHealth -Url $Url -TimeoutSec $TimeoutSec
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if (Test-BackendCommandApi -Url $Url) {
+            return
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    throw "Backend at $Url is healthy but does not support /api/v1/device/command. Stop the old server process and rerun this script."
 }
 
 function ConvertTo-SingleQuotedPowerShell {
@@ -106,9 +139,11 @@ if (-not (Test-BackendHealth -Url $BaseUrl)) {
     $stdout = Join-Path $LogDir "ai-home-server-$stamp.stdout.log"
     $stderr = Join-Path $LogDir "ai-home-server-$stamp.stderr.log"
     $manifestPath = Join-Path $root "server\Cargo.toml"
+    $targetDir = Join-Path $env:TEMP "ouo-server-target-closed-loop"
     $quotedManifest = ConvertTo-SingleQuotedPowerShell -Value $manifestPath
+    $quotedTargetDir = ConvertTo-SingleQuotedPowerShell -Value $targetDir
     $serverAddr = "0.0.0.0:$ServerPort"
-    $command = "`$env:OUO_SERVER_ADDR='$serverAddr'; cargo run --manifest-path $quotedManifest"
+    $command = "`$env:OUO_SERVER_ADDR='$serverAddr'; cargo run --manifest-path $quotedManifest --target-dir $quotedTargetDir"
 
     Write-Host "starting_backend=1 addr=$serverAddr stdout=$stdout stderr=$stderr"
     $startedServer = Start-Process `
@@ -119,8 +154,11 @@ if (-not (Test-BackendHealth -Url $BaseUrl)) {
         -RedirectStandardOutput $stdout `
         -RedirectStandardError $stderr `
         -PassThru
-    Wait-BackendHealth -Url $BaseUrl -TimeoutSec 45
+    Wait-BackendReady -Url $BaseUrl -TimeoutSec 45
 } else {
+    if (-not (Test-BackendCommandApi -Url $BaseUrl)) {
+        throw "Existing backend at $BaseUrl is healthy but does not support /api/v1/device/command. Stop the old server process and rerun this script."
+    }
     Write-Host "starting_backend=0 existing backend is healthy"
 }
 
