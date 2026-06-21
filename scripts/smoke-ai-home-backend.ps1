@@ -151,12 +151,25 @@ $manifest = Invoke-RestMethod -Method Get -Uri (Join-Url $BaseUrl "/api/v1/ota/m
 Assert-NotBlank -Value $manifest.version -Message "ota manifest version was blank"
 Assert-NotBlank -Value $manifest.firmware_url -Message "ota manifest firmware_url was blank"
 Assert-NotBlank -Value $manifest.sha256 -Message "ota manifest sha256 was blank"
+Assert-True -Condition ($manifest.sha256 -match "^[0-9a-fA-F]{64}$") -Message "ota manifest sha256 was not 64 hex chars"
 Assert-True -Condition ($manifest.size -gt 0) -Message "ota manifest size was not positive"
 $firmwareHead = Invoke-WebRequest -Method Head -Uri $manifest.firmware_url -TimeoutSec $TimeoutSec
 Assert-True -Condition ($firmwareHead.StatusCode -eq 200) -Message "firmware HEAD did not return HTTP 200"
 $firmwareContentLength = [int64]([string]::Join("", @($firmwareHead.Headers["Content-Length"])))
 Assert-True -Condition ($firmwareContentLength -eq [int64]$manifest.size) -Message "firmware Content-Length did not match manifest size"
-Write-Host "ok ota manifest version=$($manifest.version) size=$($manifest.size)"
+$firmwareTemp = Join-Path ([System.IO.Path]::GetTempPath()) ("ouo-ota-smoke-{0}.bin" -f ([guid]::NewGuid().ToString("N")))
+try {
+    Invoke-WebRequest -Method Get -Uri $manifest.firmware_url -OutFile $firmwareTemp -TimeoutSec $TimeoutSec
+    $firmwareFile = Get-Item -LiteralPath $firmwareTemp
+    Assert-True -Condition ($firmwareFile.Length -eq [int64]$manifest.size) -Message "downloaded firmware size did not match manifest size"
+    $firmwareSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $firmwareTemp).Hash.ToLowerInvariant()
+    Assert-True -Condition ($firmwareSha256 -eq ([string]$manifest.sha256).ToLowerInvariant()) -Message "downloaded firmware sha256 did not match manifest sha256"
+} finally {
+    if (Test-Path -LiteralPath $firmwareTemp) {
+        Remove-Item -LiteralPath $firmwareTemp -Force
+    }
+}
+Write-Host "ok ota manifest version=$($manifest.version) size=$($manifest.size) sha256=$($manifest.sha256)"
 
 $ota = Invoke-JsonPost "/api/v1/ota/report" @{
     device_id = $DeviceId
